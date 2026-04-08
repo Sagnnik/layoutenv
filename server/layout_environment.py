@@ -541,7 +541,10 @@ class LayoutEnvironment(Environment):
 
         feedback: Optional[str] = None
         if self._text_feedback:
-            feedback = _generate_text_feedback(delta_q, metrics, self._state.elements)
+            if step_num == 0:
+                feedback = "Episode started. Choose an element and action."
+            else:
+                feedback = _generate_text_feedback(delta_q, metrics, self._state.elements)
 
         obs = LayoutObservation(
             canvas={"width": 1.0, "height": 1.0},
@@ -646,7 +649,6 @@ class LayoutEnvironment(Environment):
         metrics = compute_all_metrics(self._state.elements, self._stats)
         q = quality_score(metrics, self._weights)
         delta_q = q - self._state.previous_quality
-        self._state.previous_quality = q
 
         done = is_noop or step_num >= self._max_steps
 
@@ -657,9 +659,11 @@ class LayoutEnvironment(Environment):
                 TERMINAL_BONUS_SCALE if q_delta >= Q_DELTA_THRESHOLD else TERMINAL_PENALTY
             )
 
-        return self._build_observation(
+        obs = self._build_observation(
             step_num, done, round(reward, 4), metrics, q
         )
+        self._state.previous_quality = q
+        return obs
 
     @property
     def state(self) -> LayoutState:
