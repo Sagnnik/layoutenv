@@ -107,23 +107,44 @@ docker stop layoutenv-server
 ## Usage
 
 Submission baseline script is root `inference.py` (required location).
-It uses `LayoutEnv.from_docker_image()` and emits evaluator-friendly stdout:
+It emits evaluator-friendly stdout:
 - `[START] ...`
 - `[STEP] ...`
 - `[END] ...`
 
-### LLM run
+By default, `inference.py` is configured for Hugging Face Inference Providers:
+- `API_BASE_URL=https://router.huggingface.co/v1`
+- `MODEL_NAME=Qwen/Qwen2.5-VL-72B-Instruct`
+- auth via `HF_TOKEN`
+
+Environment target:
+- local container: uses `LayoutEnv.from_docker_image(IMAGE_NAME)` when `--env-base-url` is not set
+- deployed Space: pass `--env-base-url https://<your-space>.hf.space`
+
+### LLM run (remote HF Space)
 
 ```bash
-API_BASE_URL=... MODEL_NAME=... HF_TOKEN=... \
-IMAGE_NAME=layoutenv:latest python inference.py --seed 42
+HF_TOKEN=... \
+python inference.py \
+  --env-base-url https://<your-space>.hf.space \
+  --task easy --max-steps 10 --seed 42
 ```
 
-### VLM easy-task smoke
+### VLM easy-task smoke (remote HF Space)
 
 ```bash
-API_BASE_URL=... MODEL_NAME=... HF_TOKEN=... \
-IMAGE_NAME=layoutenv:latest python inference.py --mode vlm --task easy --max-steps 5 --seed 42
+HF_TOKEN=... \
+python inference.py \
+  --mode vlm \
+  --env-base-url https://<your-space>.hf.space \
+  --task easy --max-steps 10 --seed 42
+```
+
+### Local Docker fallback
+
+```bash
+HF_TOKEN=... IMAGE_NAME=layoutenv:latest \
+python inference.py --task easy --max-steps 10 --seed 42
 ```
 
 ## Environment Details

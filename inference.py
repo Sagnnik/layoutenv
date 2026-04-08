@@ -33,9 +33,8 @@ load_dotenv()
 
 IMAGE_NAME = os.getenv("IMAGE_NAME", "layoutenv:latest")
 ENV_BASE_URL = os.getenv("LAYOUTENV_BASE_URL") or os.getenv("ENV_BASE_URL")
-API_KEY = os.getenv("OPENAI_API_KEY") or os.getenv("HF_TOKEN") or os.getenv("API_KEY")
-API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-VL-72B-Instruct")
 TASK_NAME = os.getenv("LAYOUT_TASK", "layout-refinement")
 BENCHMARK = os.getenv("LAYOUT_BENCHMARK", "layoutenv")
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.0"))
@@ -49,8 +48,20 @@ DATASET_DIR = SCRIPT_DIR / "dataset"
 TASK_SAMPLES_JSON = DATASET_DIR / "task_samples.json"
 DATASET_JSON_LOCAL = os.getenv("LAYOUT_DATASET", str(DATASET_DIR / "genposter_5000_images.json"))
 DATASET_JSON_SERVER = os.getenv("LAYOUT_DATASET_SERVER", "/app/env/dataset/genposter_5000_images.json")
-USE_STRUCTURED_OUTPUT = os.getenv("MODEL_NAME", "gpt-4o").startswith("gpt-")
+USE_STRUCTURED_OUTPUT = os.getenv("USE_STRUCTURED_OUTPUT", "0") == "1"
 MAX_HISTORY_TURNS = int(os.getenv("MAX_HISTORY_TURNS", "12"))
+
+
+def resolve_api_key(api_base_url: str) -> Optional[str]:
+    """
+    Pick the right credential based on endpoint.
+    - HF router should use HF_TOKEN first.
+    - OpenAI endpoint should use OPENAI_API_KEY first.
+    """
+    base = (api_base_url or "").lower()
+    if "huggingface.co" in base:
+        return os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY")
+    return os.getenv("OPENAI_API_KEY") or os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 
 
 def load_task_samples(path: str | Path = TASK_SAMPLES_JSON) -> List[Dict[str, Any]]:
@@ -269,7 +280,8 @@ async def main() -> None:
         "If set, skip local Docker startup.",
     )
     args = parser.parse_args()
-    if not API_KEY:
+    api_key = resolve_api_key(API_BASE_URL)
+    if not api_key:
         raise RuntimeError(
             "Missing API key — set HF_TOKEN (required for submission), "
             "or OPENAI_API_KEY/API_KEY for local testing."
@@ -279,7 +291,7 @@ async def main() -> None:
         tasks = [t for t in tasks if t["task_id"] == args.task]
         if not tasks:
             raise RuntimeError(f"Task '{args.task}' not found in {TASK_SAMPLES_JSON}")
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    client = OpenAI(base_url=API_BASE_URL, api_key=api_key)
     if args.env_base_url:
         env = LayoutEnv(base_url=args.env_base_url.rstrip("/"))
     else:

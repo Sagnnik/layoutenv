@@ -1,4 +1,6 @@
+import ast
 import json
+import re
 from typing import Any, Callable, Dict, List, Tuple, Optional
 
 try:
@@ -202,27 +204,107 @@ def parse_action(raw: str) -> Optional[LayoutAction]:
     Handles ``<think>…</think>`` reasoning blocks and
     markdown code fences.  Returns None on any parse failure.
     """
-    try:
-        text = raw.strip()
-        if "</think>" in text:
-            text = text.split("</think>", 1)[-1].strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[-1]
-        if text.endswith("```"):
-            text = text.rsplit("```", 1)[0]
-        text = text.strip()
+    def _strip_wrappers(text: str) -> str:
+        t = text.strip()
+        if "</think>" in t:
+            t = t.split("</think>", 1)[-1].strip()
+        # Remove fenced blocks while keeping inner body.
+        if t.startswith("```"):
+            t = re.sub(r"^```[a-zA-Z0-9_-]*\s*\n?", "", t)
+        if t.endswith("```"):
+            t = t.rsplit("```", 1)[0]
+        return t.strip()
 
-        data = json.loads(text)
+    def _extract_json_objects(text: str) -> List[str]:
+        out: List[str] = []
+        depth = 0
+        start = -1
+        for i, ch in enumerate(text):
+            if ch == "{":
+                if depth == 0:
+                    start = i
+                depth += 1
+            elif ch == "}":
+                if depth > 0:
+                    depth -= 1
+                    if depth == 0 and start >= 0:
+                        out.append(text[start : i + 1])
+                        start = -1
+        return out
 
-        magnitude = data.get("magnitude", "MEDIUM")
+    def _to_dict(candidate: str) -> Optional[Dict[str, Any]]:
+        c = candidate.strip()
+        if not c:
+            return None
+        try:
+            parsed = json.loads(c)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+        # Some models emit python-like dicts using single quotes.
+        try:
+            parsed = ast.literal_eval(c)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+        return None
+
+    def _unwrap_action_container(data: Dict[str, Any]) -> Dict[str, Any]:
+        if "action" in data:
+            return data
+        for key in ("response", "result", "output", "arguments", "json", "data"):
+            nested = data.get(key)
+            if isinstance(nested, dict) and "action" in nested:
+                return nested
+        return data
+
+    def _normalize_action_name(value: Any) -> str:
+        action = str(value).strip().upper().replace("-", "_").replace(" ", "_")
+        aliases = {
+            "NOOP": "NO_OP",
+            "NONE": "NO_OP",
+            "STOP": "NO_OP",
+        }
+        return aliases.get(action, action)
+
+    def _normalize_param(value: Any, action: str) -> str:
+        param = str(value).strip().upper().replace("-", "_").replace(" ", "_")
+        if action == "NO_OP":
+            return "NONE"
+        if param in ("CENTRE_X",):
+            return "CENTER_X"
+        if param in ("CENTRE_Y",):
+            return "CENTER_Y"
+        return param
+
+    text = _strip_wrappers(raw)
+    candidates = [text] + _extract_json_objects(text)
+
+    for cand in candidates:
+        data = _to_dict(cand)
+        if not isinstance(data, dict):
+            continue
+        payload = _unwrap_action_container(data)
+
+        action = _normalize_action_name(payload.get("action", "NO_OP"))
+        param = _normalize_param(payload.get("param", "NONE"), action)
+        magnitude = str(payload.get("magnitude", "MEDIUM")).strip().upper()
         if magnitude not in MAGNITUDES:
             magnitude = "MEDIUM"
 
+        element_raw = payload.get("element_id", payload.get("target", 0))
+        try:
+            element_id = int(element_raw)
+        except Exception:
+            element_id = 0
+
         return LayoutAction(
-            element_id=int(data["element_id"]),
-            action=str(data["action"]).upper(),
-            param=str(data["param"]).upper(),
+            element_id=element_id,
+            action=action,
+            param=param,
             magnitude=magnitude,
         )
-    except Exception:
-        return None
+
+    return None
