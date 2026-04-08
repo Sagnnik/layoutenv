@@ -1,0 +1,275 @@
+[
+  {
+    "task_id": "easy",
+    "noise": 0.05,
+    "max_steps": 50,
+    "sample": {
+      "id": 3960,
+      "canvas_size": [
+        2000,
+        2000
+      ],
+      "elements": [
+        {
+          "type": "Bodytext",
+          "text": "Stayhome",
+          "bbox": [
+            0.0815,
+            0.335,
+            0.271,
+            0.5
+          ],
+          "font_size": 161.5577392578125,
+          "layer_image_path": "sample_images/3960_layer_0.png"
+        },
+        {
+          "type": "Bodytext",
+          "text": "2019-ncovno panic, yes caution",
+          "bbox": [
+            0.084,
+            0.2075,
+            0.5285,
+            0.318
+          ],
+          "font_size": 93.89966583251953,
+          "layer_image_path": "sample_images/3960_layer_1.png"
+        },
+        {
+          "type": "Website",
+          "text": "www.investimed.org",
+          "bbox": [
+            0.0815,
+            0.8565,
+            0.262,
+            0.883
+          ],
+          "font_size": 49.999996185302734,
+          "layer_image_path": "sample_images/3960_layer_2.png"
+        }
+      ],
+      "image_path": "sample_images/3960_bg.png"
+    }
+  },
+  {
+    "task_id": "medium",
+    "noise": 0.1,
+    "max_steps": 100,
+    "sample": {
+      "id": 723,
+      "canvas_size": [
+        1080,
+        1080
+      ],
+      "elements": [
+        {
+          "type": "Title",
+          "text": "Lavender ",
+          "bbox": [
+            0.49166666666666664,
+            0.6425925925925926,
+            0.8555555555555555,
+            0.7398148148148148
+          ],
+          "font_size": 118.02462005615234,
+          "layer_image_path": "sample_images/723_layer_0.png"
+        },
+        {
+          "type": "Date",
+          "text": "n9",
+          "bbox": [
+            0.3287037037037037,
+            0.06018518518518518,
+            0.3731481481481482,
+            0.10740740740740741
+          ],
+          "font_size": 56.867366790771484,
+          "layer_image_path": "sample_images/723_layer_1.png"
+        },
+        {
+          "type": "Date",
+          "text": "08-12JULY",
+          "bbox": [
+            0.032407407407407406,
+            0.8861111111111111,
+            0.12222222222222222,
+            0.9638888888888889
+          ],
+          "font_size": 41.37284469604492,
+          "layer_image_path": "sample_images/723_layer_2.png"
+        },
+        {
+          "type": "Bodytext",
+          "text": "Purple in the field",
+          "bbox": [
+            0.04351851851851852,
+            0.07222222222222222,
+            0.2851851851851852,
+            0.10462962962962963
+          ],
+          "font_size": 33.333335876464844,
+          "layer_image_path": "sample_images/723_layer_3.png"
+        },
+        {
+          "type": "Website",
+          "text": "www.yourwebsite.com",
+          "bbox": [
+            0.9388888888888889,
+            0.06296296296296296,
+            0.9583333333333334,
+            0.24351851851851852
+          ],
+          "font_size": 19.605072021484375,
+          "layer_image_path": "sample_images/723_layer_4.png"
+        },
+        {
+          "type": "Bodytext",
+          "text": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.",
+          "bbox": [
+            0.6037037037037037,
+            0.8907407407407407,
+            0.8787037037037037,
+            0.9546296296296296
+          ],
+          "font_size": 18.12152862548828,
+          "layer_image_path": "sample_images/723_layer_5.png"
+        }
+      ],
+      "image_path": "sample_images/723_bg.png"
+    }
+  },
+  {
+    "task_id": "hard",
+    "noise": 0.15,
+    "max_steps": 200,
+    "sample": {
+      "id": 117,
+      "canvas_size": [
+        1080,
+        1080
+      ],
+      "elements": [
+        {
+          "type": "Title",
+          "text": "GRAND\u0003OPENING\u0003SPECIAL\u0003PROMO",
+          "bbox": [
+            0.4981481481481482,
+            0.3731481481481482,
+            0.9222222222222223,
+            0.7712962962962963
+          ],
+          "font_size": 103.88194274902344,
+          "layer_image_path": "sample_images/117_layer_0.png"
+        },
+        {
+          "type": "Calls to Action",
+          "text": "DISCOUNT 70% OFF",
+          "bbox": [
+            0.49907407407407406,
+            0.33425925925925926,
+            0.7342592592592593,
+            0.3527777777777778
+          ],
+          "font_size": 25.431873321533203,
+          "layer_image_path": "sample_images/117_layer_1.png"
+        },
+        {
+          "type": "Date",
+          "text": "9 Desember 2022",
+          "bbox": [
+            0.5,
+            0.8009259259259259,
+            0.725,
+            0.8185185185185185
+          ],
+          "font_size": 25.431873321533203,
+          "layer_image_path": "sample_images/117_layer_2.png"
+        },
+        {
+          "type": "Website",
+          "text": "www.puffy-o.com",
+          "bbox": [
+            0.7731481481481481,
+            0.06574074074074074,
+            0.9296296296296296,
+            0.07685185185185185
+          ],
+          "font_size": 15.052933692932129,
+          "layer_image_path": "sample_images/117_layer_3.png"
+        },
+        {
+          "type": "Location",
+          "text": "Southfield, Michigan",
+          "bbox": [
+            0.6805555555555556,
+            0.14907407407407408,
+            0.8203703703703704,
+            0.15925925925925927
+          ],
+          "font_size": 12.107553482055664,
+          "layer_image_path": "sample_images/117_layer_4.png"
+        },
+        {
+          "type": "Calls to Action",
+          "text": "visit our store",
+          "bbox": [
+            0.5,
+            0.15092592592592594,
+            0.600925925925926,
+            0.16018518518518518
+          ],
+          "font_size": 12.107553482055664,
+          "layer_image_path": "sample_images/117_layer_5.png"
+        },
+        {
+          "type": "Social Media",
+          "text": "@puffyodoughnuts",
+          "bbox": [
+            0.7175925925925926,
+            0.9287037037037037,
+            0.8518518518518519,
+            0.9398148148148148
+          ],
+          "font_size": 11.73591136932373,
+          "layer_image_path": "sample_images/117_layer_6.png"
+        },
+        {
+          "type": "Name",
+          "text": "Puffy o doughnuts",
+          "bbox": [
+            0.5259259259259259,
+            0.9305555555555556,
+            0.6537037037037037,
+            0.9398148148148148
+          ],
+          "font_size": 11.73591136932373,
+          "layer_image_path": "sample_images/117_layer_7.png"
+        },
+        {
+          "type": "Bodytext",
+          "text": "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis ornare purus eget venenatis sagittis. Fusce interdum massa sed mi venenatis vehicula.",
+          "bbox": [
+            0.6805555555555556,
+            0.17314814814814813,
+            0.8564814814814815,
+            0.21388888888888888
+          ],
+          "font_size": 7.690639972686768,
+          "layer_image_path": "sample_images/117_layer_8.png"
+        },
+        {
+          "type": "Bodytext",
+          "text": "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis ornare purus eget venenatis sagittis. Fusce interdum massa sed mi venenatis vehicula.",
+          "bbox": [
+            0.5,
+            0.17407407407407408,
+            0.649074074074074,
+            0.21481481481481482
+          ],
+          "font_size": 7.690639972686768,
+          "layer_image_path": "sample_images/117_layer_9.png"
+        }
+      ],
+      "image_path": "sample_images/117_bg.png"
+    }
+  }
+]
