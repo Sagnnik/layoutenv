@@ -1,7 +1,10 @@
 import json
 from typing import Any, Callable, Dict, List, Tuple, Optional
 
-from layoutenv.models import MAGNITUDES, LayoutAction
+try:
+    from layoutenv.models import MAGNITUDES, LayoutAction
+except ImportError:
+    from models import MAGNITUDES, LayoutAction
 
 # Shared body: strategy, metrics, actions — identical for LLM and VLM after each intro.
 PROMPT_SHARED_TAIL = """\

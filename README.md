@@ -72,16 +72,10 @@ and call the synchronous methods in your own wrapper.
 
 ## Build the Docker Image
 
-From repo root:
+From this repository root:
 
 ```bash
-docker build -t layoutenv:latest -f layoutenv/server/Dockerfile .
-```
-
-From `layoutenv/` directory:
-
-```bash
-docker build -t layoutenv:latest -f server/Dockerfile .
+docker build -t layoutenv:latest -f Dockerfile .
 ```
 
 ## Run the Server (Volume-Mounted Dataset)
@@ -183,7 +177,7 @@ This gives dense training/evaluation signal, not only terminal success.
 
 ## Task Grading
 
-Deterministic grading logic is implemented in `layoutenv/grader.py`:
+Deterministic grading logic is implemented in `grader.py`:
 - `q_delta = final_q - initial_q`
 - `score = clamp((q_delta + 2.0) / 4.0, 0, 1)`
 - task-specific success thresholds:
@@ -195,7 +189,7 @@ Note: score is intentionally clamped to `[0, 1]` for stable reporting.
 
 ## Deploy to Hugging Face Spaces
 
-From `layoutenv/`:
+From the repository root:
 
 ```bash
 openenv push
@@ -215,17 +209,19 @@ After deploy, verify:
 ## Project Structure
 
 ```text
-layoutenv/
+.
+├── Dockerfile
 ├── __init__.py
 ├── client.py
 ├── grader.py
+├── inference.py
 ├── models.py
 ├── openenv.yaml
 ├── pyproject.toml
 ├── README.md
+├── prompts.py
 └── server/
     ├── app.py
     ├── layout_environment.py
-    ├── metrics.py
-    └── Dockerfile
+    └── metrics.py
 ```

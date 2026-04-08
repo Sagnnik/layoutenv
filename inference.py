@@ -20,13 +20,19 @@ from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from openai import OpenAI
-from layoutenv import LayoutAction, LayoutEnv, LayoutObservation
-from layoutenv.grader import grade_episode, success_from_q_delta
+try:
+    from layoutenv import LayoutAction, LayoutEnv, LayoutObservation
+    from layoutenv.grader import grade_episode, success_from_q_delta
+except ImportError:
+    from client import LayoutEnv
+    from grader import grade_episode, success_from_q_delta
+    from models import LayoutAction, LayoutObservation
 from prompts import ACTION_JSON_SCHEMA, get_prompts, parse_action
 
 load_dotenv()
 
 IMAGE_NAME = os.getenv("IMAGE_NAME", "layoutenv:latest")
+ENV_BASE_URL = os.getenv("LAYOUTENV_BASE_URL") or os.getenv("ENV_BASE_URL")
 API_KEY = os.getenv("OPENAI_API_KEY") or os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o")
@@ -255,6 +261,13 @@ async def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--task", type=str, default=None, choices=["easy", "medium", "hard"])
     parser.add_argument("--max-steps", type=int, default=None)
+    parser.add_argument(
+        "--env-base-url",
+        type=str,
+        default=ENV_BASE_URL,
+        help="Remote environment base URL (e.g. https://<space>.hf.space). "
+        "If set, skip local Docker startup.",
+    )
     args = parser.parse_args()
     if not API_KEY:
         raise RuntimeError(
@@ -267,7 +280,10 @@ async def main() -> None:
         if not tasks:
             raise RuntimeError(f"Task '{args.task}' not found in {TASK_SAMPLES_JSON}")
     client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-    env = await LayoutEnv.from_docker_image(IMAGE_NAME)
+    if args.env_base_url:
+        env = LayoutEnv(base_url=args.env_base_url.rstrip("/"))
+    else:
+        env = await LayoutEnv.from_docker_image(IMAGE_NAME)
     results: List[Dict[str, Any]] = []
     try:
         for task_entry in tasks:

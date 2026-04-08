@@ -9,7 +9,11 @@ from typing import Dict
 
 from openenv.core.client_types import StepResult  # noqa: F401
 from openenv.core.env_client import EnvClient
-from .models import LayoutAction, LayoutObservation, LayoutState
+
+try:
+    from .models import LayoutAction, LayoutObservation, LayoutState
+except ImportError:
+    from models import LayoutAction, LayoutObservation, LayoutState
 
 
 class LayoutEnv(EnvClient[LayoutAction, LayoutObservation, LayoutState]):
