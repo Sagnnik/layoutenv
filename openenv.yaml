@@ -1,7 +1,23 @@
 spec_version: 1
 name: layoutenv
+description: Layout refinement RL environment for iterative poster cleanup.
 type: space
 runtime: fastapi
 app: server.app:app
 port: 8000
-
+tasks:
+  - id: easy
+    name: Easy Layout Cleanup
+    description: Improve a lightly perturbed poster layout.
+    difficulty: easy
+    grader: "graders:grade_easy"
+  - id: medium
+    name: Medium Layout Cleanup
+    description: Improve a moderately perturbed poster layout.
+    difficulty: medium
+    grader: "graders:grade_medium"
+  - id: hard
+    name: Hard Layout Cleanup
+    description: Improve a heavily perturbed poster layout.
+    difficulty: hard
+    grader: "graders:grade_hard"
