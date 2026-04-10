@@ -41,7 +41,7 @@ BENCHMARK = os.getenv("LAYOUT_BENCHMARK", "layoutenv")
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.0"))
 MAX_TOKENS = 200
 SUCCESS_Q_DELTA = 0.1
-PRINT_SUMMARY_STDERR = os.getenv("PRINT_SUMMARY_STDERR", "1") == "1"
+PRINT_SUMMARY_STDERR = os.getenv("PRINT_SUMMARY_STDERR", "0") == "1"
 EARLY_STOP_ON_SUCCESS = os.getenv("EARLY_STOP_ON_SUCCESS", "1") == "1"
 
 SCRIPT_DIR = Path(__file__).resolve().parent
