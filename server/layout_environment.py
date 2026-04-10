@@ -11,6 +11,7 @@ this environment is agnostic to how the initial layout was produced.
 from __future__ import annotations
 import base64
 import io
+import math
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
@@ -464,6 +465,19 @@ TERMINAL_BONUS_SCALE = 5.0
 TERMINAL_PENALTY = -1.0
 # Align terminal shaping with the easiest grader delta threshold.
 Q_DELTA_THRESHOLD = 0.05
+VISIBLE_REWARD_EPS = 0.01
+
+
+def _normalize_visible_reward(raw_reward: float | int) -> float:
+    """
+    Bound the externally visible reward to the open interval (0, 1).
+
+    The environment still computes its internal shaping reward in the native
+    scale, but the reward exposed through the OpenEnv API should remain
+    validator-friendly and render safely at 2 decimal places.
+    """
+    normalized = 1.0 / (1.0 + math.exp(-float(raw_reward)))
+    return min(max(normalized, VISIBLE_REWARD_EPS), 1.0 - VISIBLE_REWARD_EPS)
 
 
 class LayoutEnvironment(Environment):
@@ -555,7 +569,7 @@ class LayoutEnvironment(Environment):
             quality_score=q,
             initial_quality_score=self._state.initial_quality,
             text_feedback=feedback,
-            reward=reward,
+            reward=_normalize_visible_reward(reward),
             done=done,
             image_path=image_path,
             rendered_image_base64=rendered_b64,
