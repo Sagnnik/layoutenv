@@ -32,9 +32,10 @@ from prompts import ACTION_JSON_SCHEMA, get_prompts, parse_action
 load_dotenv()
 
 IMAGE_NAME = os.getenv("IMAGE_NAME", "layoutenv:latest")
-ENV_BASE_URL = os.getenv("LAYOUTENV_BASE_URL") or os.getenv("ENV_BASE_URL")
+ENV_BASE_URL = os.getenv("LAYOUTENV_BASE_URL") or os.getenv("ENV_BASE_URL", "https://ryz3n758-layoutenv.hf.space")
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-VL-72B-Instruct")
+HF_TOKEN = os.getenv("HF_TOKEN")
 TASK_NAME = os.getenv("LAYOUT_TASK", "layout-refinement")
 BENCHMARK = os.getenv("LAYOUT_BENCHMARK", "layoutenv")
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.0"))
@@ -50,18 +51,6 @@ DATASET_JSON_LOCAL = os.getenv("LAYOUT_DATASET", str(DATASET_DIR / "genposter_50
 DATASET_JSON_SERVER = os.getenv("LAYOUT_DATASET_SERVER", "/app/env/dataset/genposter_5000_images.json")
 USE_STRUCTURED_OUTPUT = os.getenv("USE_STRUCTURED_OUTPUT", "0") == "1"
 MAX_HISTORY_TURNS = int(os.getenv("MAX_HISTORY_TURNS", "12"))
-
-
-def resolve_api_key(api_base_url: str) -> Optional[str]:
-    """
-    Pick the right credential based on endpoint.
-    - HF router should use HF_TOKEN first.
-    - OpenAI endpoint should use OPENAI_API_KEY first.
-    """
-    base = (api_base_url or "").lower()
-    if "huggingface.co" in base:
-        return os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY")
-    return os.getenv("OPENAI_API_KEY") or os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 
 
 def load_task_samples(path: str | Path = TASK_SAMPLES_JSON) -> List[Dict[str, Any]]:
@@ -109,11 +98,10 @@ def log_step(step: int, action_str: str, reward: float, done: bool, error: Optio
     )
 
 
-def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+def log_end(success: bool, steps: int, rewards: List[float]) -> None:
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(
-        f"[END] success={str(success).lower()} steps={steps} "
-        f"score={score:.3f} rewards={rewards_str}",
+        f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}",
         flush=True,
     )
 
@@ -199,71 +187,98 @@ async def run_episode(
     if seed is not None:
         random.seed(seed)
     perturbed = perturb_sample(sample, noise=noise)
-    log_start(task=f"{TASK_NAME}/{task_id}", env=BENCHMARK, model=MODEL_NAME)
-    result = await env.reset(
-        seed=seed,
-        sample=perturbed,
-        dataset_json_path=dataset_json_server,
-        mode=mode,
-        render_image_in_observation=True,
-    )
-    obs = result.observation
-    initial_q = obs.quality_score
+    log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
     rewards: List[float] = []
     steps_taken = 0
-    history: List[dict] = []
-    pending_feedback: Optional[str] = None
-    for step in range(1, max_steps + 1):
-        if result.done:
-            break
-        rendered = obs.rendered_image_base64 if mode == "vlm" else None
-        action, raw, parse_failed = await get_layout_action(
-            client,
-            history,
-            obs,
-            mode,
-            rendered_b64=rendered,
-            pending_feedback=pending_feedback,
-        )
-        pending_feedback = None
-        if action is None:
-            action = LayoutAction(element_id=0, action="NO_OP", param="NONE")
-        action_str = action_to_string(action, raw)
-        result = await env.step(action)
-        obs = result.observation
-        reward = result.reward or 0.0
-        done = result.done
-        error = "parse_error" if parse_failed else None
-        if obs.text_feedback:
-            # Inject as part of next user payload to avoid consecutive user-role messages.
-            pending_feedback = obs.text_feedback
-        rewards.append(reward)
-        steps_taken = step
-        log_step(step, action_str, reward, done, error)
-        if EARLY_STOP_ON_SUCCESS:
-            q_delta_now = obs.quality_score - initial_q
-            if success_from_q_delta(task_id, q_delta_now, SUCCESS_Q_DELTA):
-                break
-        if done:
-            break
-    final_q = obs.quality_score
-    q_delta = final_q - initial_q
-    grade = grade_episode(
-        task_id=task_id,
-        initial_quality=initial_q,
-        final_quality=final_q,
-        success_q_delta=SUCCESS_Q_DELTA,
-    )
-    log_end(grade.success, steps_taken, grade.score, rewards)
-    return {
+    success = False
+    summary: Dict[str, Any] = {
         "task_id": task_id,
-        "success": grade.success,
-        "steps": steps_taken,
-        "score": grade.score,
-        "initial_q": initial_q,
-        "final_q": final_q,
-        "q_delta": q_delta,
+        "success": False,
+        "steps": 0,
+        "score": 0.0,
+        "initial_q": 0.0,
+        "final_q": 0.0,
+        "q_delta": 0.0,
     }
+    run_error: Optional[Exception] = None
+    try:
+        result = await env.reset(
+            seed=seed,
+            sample=perturbed,
+            dataset_json_path=dataset_json_server,
+            mode=mode,
+            render_image_in_observation=True,
+        )
+        obs = result.observation
+        initial_q = obs.quality_score
+        history: List[dict] = []
+        pending_feedback: Optional[str] = None
+        for step in range(1, max_steps + 1):
+            if result.done:
+                break
+            rendered = obs.rendered_image_base64 if mode == "vlm" else None
+            action, raw, _parse_failed = await get_layout_action(
+                client,
+                history,
+                obs,
+                mode,
+                rendered_b64=rendered,
+                pending_feedback=pending_feedback,
+            )
+            pending_feedback = None
+            if action is None:
+                action = LayoutAction(element_id=0, action="NO_OP", param="NONE")
+            action_str = action_to_string(action, raw)
+            result = await env.step(action)
+            obs = result.observation
+            reward = result.reward or 0.0
+            done = result.done
+            raw_error = getattr(result, "last_action_error", None)
+            if raw_error is None:
+                metadata = getattr(obs, "metadata", None)
+                if isinstance(metadata, dict):
+                    raw_error = metadata.get("last_action_error")
+            if obs.text_feedback:
+                # Inject as part of next user payload to avoid consecutive user-role messages.
+                pending_feedback = obs.text_feedback
+            rewards.append(reward)
+            steps_taken = step
+            log_step(step, action_str, reward, done, raw_error)
+            if EARLY_STOP_ON_SUCCESS:
+                q_delta_now = obs.quality_score - initial_q
+                if success_from_q_delta(task_id, q_delta_now, SUCCESS_Q_DELTA):
+                    break
+            if done:
+                break
+        final_q = obs.quality_score
+        q_delta = final_q - initial_q
+        grade = grade_episode(
+            task_id=task_id,
+            initial_quality=initial_q,
+            final_quality=final_q,
+            success_q_delta=SUCCESS_Q_DELTA,
+        )
+        success = grade.success
+        summary = {
+            "task_id": task_id,
+            "success": grade.success,
+            "steps": steps_taken,
+            "score": grade.score,
+            "initial_q": initial_q,
+            "final_q": final_q,
+            "q_delta": q_delta,
+        }
+    except Exception as exc:
+        run_error = exc
+    finally:
+        try:
+            await env.close()
+        except Exception as close_error:
+            print(f"[DEBUG] env.close() error (container cleanup): {close_error}", file=sys.stderr, flush=True)
+        log_end(success=success, steps=steps_taken, rewards=rewards)
+    if run_error is not None:
+        raise run_error
+    return summary
 
 
 async def main() -> None:
@@ -271,7 +286,7 @@ async def main() -> None:
     parser.add_argument("--mode", choices=["llm", "vlm"], default="llm")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--task", type=str, default=None, choices=["easy", "medium", "hard"])
-    parser.add_argument("--max-steps", type=int, default=None)
+    parser.add_argument("--max-steps", type=int, default=20)
     parser.add_argument(
         "--env-base-url",
         type=str,
@@ -280,25 +295,23 @@ async def main() -> None:
         "If set, skip local Docker startup.",
     )
     args = parser.parse_args()
-    api_key = resolve_api_key(API_BASE_URL)
-    if not api_key:
-        raise RuntimeError(
-            "Missing API key — set HF_TOKEN (required for submission), "
-            "or OPENAI_API_KEY/API_KEY for local testing."
-        )
+    if not HF_TOKEN:
+        raise RuntimeError("Missing required HF_TOKEN environment variable.")
     tasks = load_task_samples()
     if args.task:
         tasks = [t for t in tasks if t["task_id"] == args.task]
         if not tasks:
             raise RuntimeError(f"Task '{args.task}' not found in {TASK_SAMPLES_JSON}")
-    client = OpenAI(base_url=API_BASE_URL, api_key=api_key)
-    if args.env_base_url:
-        env = LayoutEnv(base_url=args.env_base_url.rstrip("/"))
-    else:
-        env = await LayoutEnv.from_docker_image(IMAGE_NAME)
+    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+    if args.task is None and tasks:
+        tasks = [tasks[0]]
     results: List[Dict[str, Any]] = []
-    try:
-        for task_entry in tasks:
+    for task_entry in tasks:
+        if args.env_base_url:
+            env = LayoutEnv(base_url=args.env_base_url.rstrip("/"))
+        else:
+            env = await LayoutEnv.from_docker_image(IMAGE_NAME)
+        try:
             r = await run_episode(
                 client,
                 env,
@@ -309,11 +322,9 @@ async def main() -> None:
                 max_steps_override=args.max_steps,
             )
             results.append(r)
-    finally:
-        try:
-            await env.close()
-        except Exception as e:
-            print(f"[DEBUG] env.close() error (container cleanup): {e}", flush=True)
+        except Exception:
+            # run_episode always emits [END], then re-raises.
+            raise
     if PRINT_SUMMARY_STDERR:
         print("\n=== Summary ===", file=sys.stderr, flush=True)
         for r in results:

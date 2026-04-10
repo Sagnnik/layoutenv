@@ -11,3 +11,5 @@ build/
 dist/
 wheels/
 *.egg-info/
+.codex
+dataset/saliency_images
