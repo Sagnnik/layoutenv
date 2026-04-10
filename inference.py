@@ -303,8 +303,6 @@ async def main() -> None:
         if not tasks:
             raise RuntimeError(f"Task '{args.task}' not found in {TASK_SAMPLES_JSON}")
     client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
-    if args.task is None and tasks:
-        tasks = [tasks[0]]
     results: List[Dict[str, Any]] = []
     for task_entry in tasks:
         if args.env_base_url:

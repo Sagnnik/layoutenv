@@ -20,18 +20,26 @@ class TaskGrade:
     q_delta: float
 
 
+OPEN_INTERVAL_EPS = 1e-6
+
+
 def _clamp01(x: float) -> float:
     return min(max(x, 0.0), 1.0)
 
 
+def _clamp_open01(x: float) -> float:
+    return min(max(x, OPEN_INTERVAL_EPS), 1.0 - OPEN_INTERVAL_EPS)
+
+
 def score_from_q_delta(q_delta: float) -> float:
     """
-    Map quality delta to [0, 1] score.
+    Map quality delta to a score strictly inside (0, 1).
 
-    The linear map is intentionally clamped so large outliers do not
-    destabilize reported leaderboard-compatible scores.
+    OpenEnv submission validation rejects exact 0.0 and 1.0 task
+    scores, so we keep the same linear map but clamp into an open
+    interval to avoid boundary values under extreme deltas.
     """
-    return _clamp01((q_delta + 2.0) / 4.0)
+    return _clamp_open01(_clamp01((q_delta + 2.0) / 4.0))
 
 
 def success_from_q_delta(task_id: str, q_delta: float, default_threshold: float) -> bool:

@@ -200,13 +200,14 @@ This gives dense training/evaluation signal, not only terminal success.
 
 Deterministic grading logic is implemented in `grader.py`:
 - `q_delta = final_q - initial_q`
-- `score = clamp((q_delta + 2.0) / 4.0, 0, 1)`
+- `score = clamp((q_delta + 2.0) / 4.0, eps, 1 - eps)`
 - task-specific success thresholds:
   - `easy >= 0.05`
   - `medium >= 0.10`
   - `hard >= 0.15`
 
-Note: score is intentionally clamped to `[0, 1]` for stable reporting.
+Note: score is intentionally clamped into the open interval `(0, 1)` so
+submission validators never see exact boundary values.
 
 ## Deploy to Hugging Face Spaces
 
