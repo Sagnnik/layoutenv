@@ -170,6 +170,7 @@ Per-step payload includes:
 - `metrics`: layout metrics:
   - `overlap` (lower better)
   - `boundary` (lower better)
+  - `occlusion` (lower better; VLM-only content-aware metric, neutral in LLM mode)
   - `alignment` (higher better)
   - `spacing` (higher better)
   - `plausibility` (higher better)
@@ -185,7 +186,7 @@ Server state tracks:
 - `episode_id`, `step_count`
 - current `elements`
 - `previous_quality`, `initial_quality`
-- VLM context (`current_image_rel`, `dataset_json_path`)
+- VLM context (`current_image_rel`, `current_saliency_rel`, `dataset_json_path`)
 
 ### Reward
 

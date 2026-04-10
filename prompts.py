@@ -16,6 +16,7 @@ EXACTLY ONE action that modifies one element.
 ## Metrics (shown each turn)
 - overlap   (lower is better, 0 = none)  — how much elements overlap each other.
 - boundary  (lower is better, 0 = none)  — how much elements spill outside the canvas.
+- occlusion (lower is better, 0 = none)  — saliency-covered ratio (active in VLM mode; neutral in LLM mode).
 - alignment (higher is better, 1 = perfect) — how many element edges/centres line up.
 - spacing   (higher is better, 1 = perfect) — how uniform the gaps between elements are.
 - plausibility (higher is better, 1 = perfect) — how realistic each element's position
@@ -68,6 +69,7 @@ Current layout:
 Metrics:
   overlap:       {overlap}  (target: 0)
   boundary:      {boundary}  (target: 0)
+  occlusion:     {occlusion}  (target: 0; neutral in LLM mode)
   alignment:     {alignment}  (target: 1)
   spacing:       {spacing}  (target: 1)
   plausibility:  {plausibility}  (target: 1)
@@ -92,6 +94,7 @@ Current layout (normalised coordinates):
 Metrics:
   overlap:       {overlap}  (target: 0)
   boundary:      {boundary}  (target: 0)
+  occlusion:     {occlusion}  (target: 0)
   alignment:     {alignment}  (target: 1)
   spacing:       {spacing}  (target: 1)
   plausibility:  {plausibility}  (target: 1)
@@ -126,6 +129,7 @@ def _metrics_format_args(obs_dict: Dict) -> Dict[str, Any]:
         "elements_json": json.dumps(elements_for_display, indent=2),
         "overlap": m.get("overlap", "?"),
         "boundary": m.get("boundary", "?"),
+        "occlusion": m.get("occlusion", "?"),
         "alignment": m.get("alignment", "?"),
         "spacing": m.get("spacing", "?"),
         "plausibility": m.get("plausibility", "?"),
@@ -175,7 +179,7 @@ ACTION_JSON_SCHEMA = {
                     "enum": [
                         "UP", "DOWN", "LEFT", "RIGHT",
                         "WIDER", "NARROWER", "TALLER", "SHORTER",
-                        "CENTER_X", "CENTER_Y", "TOP", "BOTTOM",
+                        "LEFT", "CENTER_X", "RIGHT", "TOP", "CENTER_Y", "BOTTOM",
                         "GRID", "NONE",
                     ],
                 },

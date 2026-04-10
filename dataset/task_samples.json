@@ -1,7 +1,7 @@
 [
   {
     "task_id": "easy",
-    "noise": 0.05,
+    "noise": 0.1,
     "max_steps": 50,
     "sample": {
       "id": 3960,
@@ -47,7 +47,8 @@
           "layer_image_path": "sample_images/3960_layer_2.png"
         }
       ],
-      "image_path": "sample_images/3960_bg.png"
+      "image_path": "sample_images/3960_bg.png",
+      "saliency_image_path": "sample_saliency_images/3960_bg.npy"
     }
   },
   {
@@ -134,12 +135,13 @@
           "layer_image_path": "sample_images/723_layer_5.png"
         }
       ],
-      "image_path": "sample_images/723_bg.png"
+      "image_path": "sample_images/723_bg.png",
+      "saliency_image_path": "sample_saliency_images/723_bg.npy"
     }
   },
   {
     "task_id": "hard",
-    "noise": 0.15,
+    "noise": 0.35,
     "max_steps": 200,
     "sample": {
       "id": 117,
@@ -269,7 +271,8 @@
           "layer_image_path": "sample_images/117_layer_9.png"
         }
       ],
-      "image_path": "sample_images/117_bg.png"
+      "image_path": "sample_images/117_bg.png",
+      "saliency_image_path": "sample_saliency_images/117_bg.npy"
     }
   }
 ]

@@ -12,7 +12,7 @@ from __future__ import annotations
 import base64
 import io
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Set
 from uuid import uuid4
 
 import numpy as np
@@ -31,6 +31,8 @@ from .metrics import (
     compute_all_metrics,
     quality_score,
 )
+
+CONTENT_AWARE_METRICS: Set[str] = {"occlusion"}
 
 
 # Single baked-in training-free layout (normalised bboxes).
@@ -375,6 +377,24 @@ def _render_layout_on_background(
     return composed.convert("RGB")
 
 
+def _safe_load_saliency_array(path: Path) -> np.ndarray | None:
+    """
+    Best-effort saliency loader. Returns None on missing/invalid content.
+    Expected input is a 2D float-compatible numpy array.
+    """
+    if not path.is_file():
+        return None
+    try:
+        loaded = np.load(path)
+    except Exception:
+        return None
+    arr = np.asarray(loaded, dtype=np.float32)
+    if arr.ndim != 2 or arr.size == 0:
+        return None
+    arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+    return np.clip(arr, 0.0, None)
+
+
 def _pil_to_png_base64(img: Image.Image) -> str:
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
@@ -405,8 +425,9 @@ def _generate_text_feedback(
     boundary = metrics.get("boundary", 0.0)
     alignment = metrics.get("alignment", 1.0)
     spacing = metrics.get("spacing", 1.0)
+    occlusion = metrics.get("occlusion", 0.0)
 
-    penalties = {"overlap": overlap, "boundary": boundary}
+    penalties = {"overlap": overlap, "boundary": boundary, "occlusion": occlusion}
     worst_penalty_name = max(penalties, key=penalties.get)  # type: ignore[arg-type]
     worst_penalty_val = penalties[worst_penalty_name]
 
@@ -420,7 +441,7 @@ def _generate_text_feedback(
                 f"Overlap is high ({overlap:.3f}). "
                 "MOVE overlapping elements apart or RESIZE them smaller."
             )
-        else:
+        elif worst_penalty_name == "boundary":
             oob = [
                 e["id"] for e in elements
                 if _is_out_of_bounds(e)
@@ -435,6 +456,11 @@ def _generate_text_feedback(
                     f"Boundary penalty ({boundary:.3f}). "
                     "Some elements may be near the edge; MOVE inward."
                 )
+        else:
+            parts.append(
+                f"Occlusion is high ({occlusion:.3f}). "
+                "MOVE/RESIZE elements away from high-saliency regions."
+            )
     elif worst_reward_val < 0.5:
         if worst_reward_name == "alignment":
             parts.append(
@@ -502,6 +528,11 @@ class LayoutEnvironment(Environment):
         self._mode: Literal["llm", "vlm"] = "llm"
         self._text_feedback: bool = True
         self._render_image_in_observation: bool = True
+        self._saliency_map: np.ndarray | None = None
+
+    def _active_content_metric_names(self) -> Set[str]:
+        # Global policy: content-aware metrics are VLM-only.
+        return CONTENT_AWARE_METRICS if self._mode == "vlm" else set()
 
     def _build_observation(
         self,
@@ -596,6 +627,9 @@ class LayoutEnvironment(Environment):
         current_image_rel = (
             chosen.get("image_path") if self._mode == "vlm" else None
         )
+        current_saliency_rel = (
+            chosen.get("saliency_image_path") if self._mode == "vlm" else None
+        )
 
         elements = _sample_to_elements(chosen)
 
@@ -606,13 +640,30 @@ class LayoutEnvironment(Environment):
             previous_quality=0.0,
             initial_quality=0.0,
             current_image_rel=current_image_rel,
+            current_saliency_rel=current_saliency_rel,
             dataset_json_path=dataset_json_path,
         )
 
         if background_image_base64:
             self._state._bg_image_base64 = background_image_base64
 
-        metrics = compute_all_metrics(self._state.elements, self._stats)
+        self._saliency_map = None
+        if (
+            self._mode == "vlm"
+            and self._state.current_saliency_rel
+            and self._state.dataset_json_path
+        ):
+            saliency_abs = _resolve_media_path(
+                self._state.dataset_json_path, self._state.current_saliency_rel
+            )
+            self._saliency_map = _safe_load_saliency_array(saliency_abs)
+
+        metrics = compute_all_metrics(
+            self._state.elements,
+            self._stats,
+            saliency_map=self._saliency_map,
+            content_metric_names=self._active_content_metric_names(),
+        )
         q = quality_score(metrics, self._weights)
         self._state.previous_quality = q
         self._state.initial_quality = q
@@ -626,7 +677,12 @@ class LayoutEnvironment(Environment):
         valid = action.is_valid(len(self._state.elements))
 
         if not valid:
-            metrics = compute_all_metrics(self._state.elements, self._stats)
+            metrics = compute_all_metrics(
+                self._state.elements,
+                self._stats,
+                saliency_map=self._saliency_map,
+                content_metric_names=self._active_content_metric_names(),
+            )
             q = quality_score(metrics, self._weights)
             done = step_num >= self._max_steps
             reward = INVALID_ACTION_PENALTY + STEP_PENALTY
@@ -646,7 +702,12 @@ class LayoutEnvironment(Environment):
         else:
             pass
 
-        metrics = compute_all_metrics(self._state.elements, self._stats)
+        metrics = compute_all_metrics(
+            self._state.elements,
+            self._stats,
+            saliency_map=self._saliency_map,
+            content_metric_names=self._active_content_metric_names(),
+        )
         q = quality_score(metrics, self._weights)
         delta_q = q - self._state.previous_quality
 

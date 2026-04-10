@@ -12,3 +12,4 @@ wheels/
 .cursor/
 checkpoints/
 images/
+saliency_images/

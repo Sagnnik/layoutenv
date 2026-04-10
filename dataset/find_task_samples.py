@@ -8,6 +8,11 @@ Hard   : 7–10 elements, noise=0.15
 Writes dataset/task_samples.json for inference.py, copies referenced PNGs into
 dataset/sample_images/, and rewrites image_path / layer_image_path in the JSON
 to point at sample_images/ (paths relative to the dataset directory).
+
+For each sample background, copies the matching saliency array from
+dataset/saliency_images/ into dataset/sample_saliency_images/ and sets
+sample["saliency_image_path"] (e.g. sample_saliency_images/3960_bg.npy). Run
+preprocess_saliency.py first so those .npy files exist.
 """
 
 from __future__ import annotations
@@ -24,27 +29,30 @@ DATASET_JSON = SCRIPT_DIR / "genposter_5000_images.json"
 OUTPUT_JSON = SCRIPT_DIR / "task_samples.json"
 SAMPLE_IMAGES_DIR = SCRIPT_DIR / "sample_images"
 SAMPLE_IMAGES_PREFIX = "sample_images"
+SAMPLE_SALIENCY_DIR = SCRIPT_DIR / "sample_saliency_images"
+SAMPLE_SALIENCY_PREFIX = "sample_saliency_images"
+SALIENCY_SOURCE_DIR = SCRIPT_DIR / "saliency_images"
 
 TASKS = [
     {
         "task_id": "easy",
         "min_elements": 3,
         "max_elements": 4,
-        "noise": 0.05,
+        "noise": 0.1,
         "max_steps": 50,
     },
     {
         "task_id": "medium",
         "min_elements": 5,
         "max_elements": 7,
-        "noise": 0.10,
+        "noise": 0.1,
         "max_steps": 100,
     },
     {
         "task_id": "hard",
         "min_elements": 7,
         "max_elements": 10,
-        "noise": 0.15,
+        "noise": 0.35,
         "max_steps": 200,
     },
 ]
@@ -67,17 +75,47 @@ def _copy_and_remap_path(
     return f"{SAMPLE_IMAGES_PREFIX}/{name}"
 
 
+def _copy_saliency_for_background(
+    sample: dict,
+    *,
+    sample_saliency_dir: Path,
+    saliency_source_dir: Path,
+    missing: list[str],
+) -> None:
+    """Match preprocess_saliency output: saliency_images/<bg_stem>.npy"""
+    sample.pop("saliency_image_path", None)
+    ip = sample.get("image_path")
+    if not ip:
+        return
+    sal_name = f"{Path(ip).stem}.npy"
+    src = (saliency_source_dir / sal_name).resolve()
+    if not src.is_file():
+        missing.append(f"saliency_images/{sal_name}")
+        return
+    sample_saliency_dir.mkdir(parents=True, exist_ok=True)
+    dest = sample_saliency_dir / sal_name
+    shutil.copy2(src, dest)
+    sample["saliency_image_path"] = f"{SAMPLE_SALIENCY_PREFIX}/{sal_name}"
+
+
 def copy_media_and_rewrite_paths(
     output: list[dict],
     *,
     sample_images_dir: Path = SAMPLE_IMAGES_DIR,
+    sample_saliency_dir: Path = SAMPLE_SALIENCY_DIR,
+    saliency_source_dir: Path = SALIENCY_SOURCE_DIR,
     dataset_root: Path = SCRIPT_DIR,
 ) -> None:
     if sample_images_dir.exists():
         shutil.rmtree(sample_images_dir)
     sample_images_dir.mkdir(parents=True)
 
+    if sample_saliency_dir.exists():
+        shutil.rmtree(sample_saliency_dir)
+    sample_saliency_dir.mkdir(parents=True)
+
     missing: list[str] = []
+    saliency_missing: list[str] = []
     for entry in output:
         sample = entry["sample"]
         ip = sample.get("image_path")
@@ -91,10 +129,23 @@ def copy_media_and_rewrite_paths(
                 el["layer_image_path"] = _copy_and_remap_path(
                     lp, sample_images_dir, dataset_root, missing
                 )
+        _copy_saliency_for_background(
+            sample,
+            sample_saliency_dir=sample_saliency_dir,
+            saliency_source_dir=saliency_source_dir,
+            missing=saliency_missing,
+        )
 
     if missing:
         for m in missing:
             print(f"WARNING: missing source file: {dataset_root / m}", file=sys.stderr)
+    if saliency_missing:
+        for m in saliency_missing:
+            print(
+                f"WARNING: missing saliency map (run preprocess_saliency.py): "
+                f"{dataset_root / m}",
+                file=sys.stderr,
+            )
 
 
 def main() -> None:
@@ -144,6 +195,7 @@ def main() -> None:
         json.dump(output, f, indent=2)
 
     print(f"\nCopied media to {SAMPLE_IMAGES_DIR}")
+    print(f"Copied saliency arrays (.npy) to {SAMPLE_SALIENCY_DIR}")
     print(f"Saved {len(output)} task samples to {OUTPUT_JSON}")
 
 

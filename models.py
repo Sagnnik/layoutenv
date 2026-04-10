@@ -85,7 +85,9 @@ class LayoutObservation(Observation):
     Attributes:
         canvas: Canvas dimensions (always {"width": 1.0, "height": 1.0}).
         elements: Current element list with id, type, cx, cy, w, h, font_size.
-        metrics: Per-metric scores (overlap, boundary, alignment, spacing, plausibility).
+        metrics: Per-metric scores (overlap, boundary, occlusion, alignment, spacing, plausibility).
+            Content-aware metrics (e.g. occlusion) are active in VLM mode and
+            neutralized in LLM mode.
         step: Current step within the episode.
         max_steps: Maximum steps allowed in this episode.
         quality_score: Composite Q(state) — higher is better.
@@ -123,4 +125,5 @@ class LayoutState(State):
     initial_quality: float = 0.0   # Q(0)
     
     current_image_rel: Optional[str] = None
+    current_saliency_rel: Optional[str] = None
     dataset_json_path: Optional[str] = None

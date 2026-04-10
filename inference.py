@@ -49,7 +49,8 @@ TASK_SAMPLES_JSON = DATASET_DIR / "task_samples.json"
 DATASET_JSON_LOCAL = os.getenv("LAYOUT_DATASET", str(DATASET_DIR / "genposter_5000_images.json"))
 DATASET_JSON_SERVER = os.getenv("LAYOUT_DATASET_SERVER", "/app/env/dataset/genposter_5000_images.json")
 USE_STRUCTURED_OUTPUT = os.getenv("USE_STRUCTURED_OUTPUT", "0") == "1"
-MAX_HISTORY_TURNS = int(os.getenv("MAX_HISTORY_TURNS", "12"))
+# Keep only the last 3 turns by default.
+MAX_HISTORY_TURNS = int(os.getenv("MAX_HISTORY_TURNS", "3"))
 
 
 def resolve_api_key(api_base_url: str) -> Optional[str]:
@@ -155,20 +156,35 @@ async def get_layout_action(
     }
     if USE_STRUCTURED_OUTPUT:
         api_kwargs["response_format"] = ACTION_JSON_SCHEMA
+    error_msg: Optional[str] = None
     try:
         completion = await asyncio.to_thread(client.chat.completions.create, **api_kwargs)
         raw = (completion.choices[0].message.content or "").strip()
-    except Exception:
+    except Exception as exc:
+        error_msg = str(exc)
         raw = ""
     action = parse_action(raw)
     parse_failed = action is None
-    history.append({"role": "user", "content": user_content})
+    # Keep history compact in VLM mode: only persist text from user content
+    # and never keep image payloads from previous turns.
+    if mode == "vlm" and isinstance(user_content, list):
+        text_parts = [
+            part.get("text", "")
+            for part in user_content
+            if isinstance(part, dict) and part.get("type") == "text"
+        ]
+        history_user_content: Any = "\n".join(p for p in text_parts if p).strip()
+    else:
+        history_user_content = user_content
+    history.append({"role": "user", "content": history_user_content})
     history.append({"role": "assistant", "content": raw if raw else "{}"})
     # Keep only the most recent N turns (2 messages per turn).
     keep_messages = max(0, MAX_HISTORY_TURNS * 2)
-    if keep_messages and len(history) > keep_messages:
+    if keep_messages == 0:
+        history.clear()
+    elif len(history) > keep_messages:
         del history[:-keep_messages]
-    return action, raw, parse_failed
+    return action, raw, parse_failed, error_msg
 
 
 def action_to_string(action: Optional[LayoutAction], raw: str) -> str:
@@ -217,7 +233,7 @@ async def run_episode(
         if result.done:
             break
         rendered = obs.rendered_image_base64 if mode == "vlm" else None
-        action, raw, parse_failed = await get_layout_action(
+        action, raw, parse_failed, api_error = await get_layout_action(
             client,
             history,
             obs,
@@ -227,13 +243,22 @@ async def run_episode(
         )
         pending_feedback = None
         if action is None:
-            action = LayoutAction(element_id=0, action="NO_OP", param="NONE")
+            # Do not end the episode on parser/API failure; apply a safe no-op move.
+            action = LayoutAction(
+                element_id=0,
+                action="MOVE",
+                param="UP",
+                magnitude="SMALL",
+            )
         action_str = action_to_string(action, raw)
         result = await env.step(action)
         obs = result.observation
         reward = result.reward or 0.0
         done = result.done
         error = "parse_error" if parse_failed else None
+        if api_error:
+            error = f"api_error:{api_error}"
+            print(f"[WARN] API exception at step {step}: {api_error}", file=sys.stderr, flush=True)
         if obs.text_feedback:
             # Inject as part of next user payload to avoid consecutive user-role messages.
             pending_feedback = obs.text_feedback
@@ -271,7 +296,7 @@ async def main() -> None:
     parser.add_argument("--mode", choices=["llm", "vlm"], default="llm")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--task", type=str, default=None, choices=["easy", "medium", "hard"])
-    parser.add_argument("--max-steps", type=int, default=None)
+    parser.add_argument("--max-steps", type=int, default=20)
     parser.add_argument(
         "--env-base-url",
         type=str,

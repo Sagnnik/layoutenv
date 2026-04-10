@@ -6,9 +6,9 @@ from dataclasses import dataclass
 
 
 TASK_SUCCESS_Q_DELTA = {
-    "easy": 0.05,
-    "medium": 0.1,
-    "hard": 0.15,
+    "easy": 0.15,
+    "medium": 0.25,
+    "hard": 0.32,
 }
 
 
