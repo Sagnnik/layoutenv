@@ -10,10 +10,8 @@ STDOUT FORMAT
 
 import argparse
 import asyncio
-import copy
 import json
 import os
-import random
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -56,22 +54,6 @@ MAX_HISTORY_TURNS = int(os.getenv("MAX_HISTORY_TURNS", "12"))
 def load_task_samples(path: str | Path = TASK_SAMPLES_JSON) -> List[Dict[str, Any]]:
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
-
-
-def perturb_sample(sample: Dict[str, Any], noise: float = 0.1) -> Dict[str, Any]:
-    perturbed = copy.deepcopy(sample)
-    for elem in perturbed.get("elements", []):
-        x1, y1, x2, y2 = elem["bbox"]
-        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-        w, h = x2 - x1, y2 - y1
-        cx += random.uniform(-noise, noise)
-        cy += random.uniform(-noise, noise)
-        cx = max(0.0, min(1.0, cx))
-        cy = max(0.0, min(1.0, cy))
-        w = max(0.01, min(1.0, w))
-        h = max(0.01, min(1.0, h))
-        elem["bbox"] = [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2]
-    return perturbed
 
 
 def resolve_background_image_path(sample: Dict[str, Any], dataset_json_path: str) -> Optional[Path]:
@@ -179,14 +161,9 @@ async def run_episode(
     max_steps_override: Optional[int] = None,
 ) -> Dict[str, Any]:
     task_id = task_entry["task_id"]
-    sample = task_entry["sample"]
-    noise = task_entry.get("noise", 0.1)
     max_steps = task_entry.get("max_steps", 100)
     if max_steps_override is not None and max_steps_override > 0:
         max_steps = min(max_steps, max_steps_override)
-    if seed is not None:
-        random.seed(seed)
-    perturbed = perturb_sample(sample, noise=noise)
     log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
     rewards: List[float] = []
     steps_taken = 0
@@ -204,7 +181,7 @@ async def run_episode(
     try:
         result = await env.reset(
             seed=seed,
-            sample=perturbed,
+            task_id=task_id,
             dataset_json_path=dataset_json_server,
             mode=mode,
             render_image_in_observation=True,

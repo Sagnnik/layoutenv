@@ -10,9 +10,12 @@ this environment is agnostic to how the initial layout was produced.
 """
 from __future__ import annotations
 import base64
+import copy
 import io
+import json
 import math
 from pathlib import Path
+import random
 from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
 
@@ -96,6 +99,41 @@ def _default_stats_from_sample(sample: Dict[str, Any]) -> Dict[str, Any]:
 
 
 DEFAULT_STATS: Dict[str, Any] = _default_stats_from_sample(DEFAULT_LAYOUT_SAMPLE)
+SERVER_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SERVER_DIR.parent
+TASK_SAMPLES_PATH = REPO_ROOT / "dataset" / "task_samples.json"
+DEFAULT_DATASET_JSON_PATH = str(REPO_ROOT / "dataset" / "genposter_5000_images.json")
+
+
+def load_task_samples(path: Path = TASK_SAMPLES_PATH) -> Dict[str, Dict[str, Any]]:
+    with open(path, "r", encoding="utf-8") as f:
+        entries = json.load(f)
+    return {entry["task_id"]: entry for entry in entries}
+
+
+TASK_SAMPLE_MAP = load_task_samples()
+
+
+def _perturb_sample(
+    sample: Dict[str, Any],
+    noise: float,
+    *,
+    seed: Optional[int] = None,
+) -> Dict[str, Any]:
+    rng = random.Random(seed)
+    perturbed = copy.deepcopy(sample)
+    for elem in perturbed.get("elements", []):
+        x1, y1, x2, y2 = elem["bbox"]
+        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+        w, h = x2 - x1, y2 - y1
+        cx += rng.uniform(-noise, noise)
+        cy += rng.uniform(-noise, noise)
+        cx = max(0.0, min(1.0, cx))
+        cy = max(0.0, min(1.0, cy))
+        w = max(0.01, min(1.0, w))
+        h = max(0.01, min(1.0, h))
+        elem["bbox"] = [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2]
+    return perturbed
 
 
 def _sample_to_elements(sample: Dict) -> List[Dict]:
@@ -509,6 +547,7 @@ class LayoutEnvironment(Environment):
         self._state = LayoutState(episode_id=str(uuid4()), step_count=0)
 
         self._max_steps = max_steps
+        self._active_max_steps = max_steps
         self._weights = weights
         self._stats: Dict[str, Any] = (
             DEFAULT_STATS if stats is None else stats
@@ -516,6 +555,7 @@ class LayoutEnvironment(Environment):
         self._mode: Literal["llm", "vlm"] = "llm"
         self._text_feedback: bool = True
         self._render_image_in_observation: bool = True
+        self._task_id: str = "default"
 
     def _build_observation(
         self,
@@ -565,12 +605,13 @@ class LayoutEnvironment(Environment):
             elements=_round_elements(self._state.elements),
             metrics=metrics,
             step=step_num,
-            max_steps=self._max_steps,
+            max_steps=self._active_max_steps,
             quality_score=q,
             initial_quality_score=self._state.initial_quality,
             text_feedback=feedback,
             reward=_normalize_visible_reward(reward),
             done=done,
+            metadata={"task_id": self._task_id},
             image_path=image_path,
             rendered_image_base64=rendered_b64,
         )
@@ -581,6 +622,7 @@ class LayoutEnvironment(Environment):
         seed: Optional[int] = None,
         episode_id: Optional[str] = None,
         *,
+        task_id: Optional[str] = None,
         sample: Optional[Dict[str, Any]] = None,
         dataset_json_path: Optional[str] = None,
         background_image_base64: Optional[str] = None,
@@ -599,7 +641,30 @@ class LayoutEnvironment(Environment):
         if render_image_in_observation is not None:
             self._render_image_in_observation = render_image_in_observation
 
-        chosen = sample if sample is not None else DEFAULT_LAYOUT_SAMPLE
+        episode_max_steps = self._max_steps
+        selected_task_id = task_id or "default"
+        if sample is not None:
+            chosen = sample
+        elif task_id is not None:
+            if task_id not in TASK_SAMPLE_MAP:
+                raise ValueError(
+                    f"Unknown task_id '{task_id}'. Expected one of {sorted(TASK_SAMPLE_MAP)}"
+                )
+            task_entry = TASK_SAMPLE_MAP[task_id]
+            chosen = _perturb_sample(
+                task_entry["sample"],
+                float(task_entry.get("noise", 0.0)),
+                seed=seed,
+            )
+            episode_max_steps = int(task_entry.get("max_steps", self._max_steps))
+        else:
+            chosen = DEFAULT_LAYOUT_SAMPLE
+
+        self._active_max_steps = episode_max_steps
+        self._task_id = selected_task_id
+
+        if dataset_json_path is None:
+            dataset_json_path = DEFAULT_DATASET_JSON_PATH
 
         if self._mode == "vlm" and not chosen.get("image_path") and not background_image_base64:
             raise ValueError(
@@ -642,7 +707,7 @@ class LayoutEnvironment(Environment):
         if not valid:
             metrics = compute_all_metrics(self._state.elements, self._stats)
             q = quality_score(metrics, self._weights)
-            done = step_num >= self._max_steps
+            done = step_num >= self._active_max_steps
             reward = INVALID_ACTION_PENALTY + STEP_PENALTY
             if done:
                 q_delta = q - self._state.initial_quality
@@ -664,7 +729,7 @@ class LayoutEnvironment(Environment):
         q = quality_score(metrics, self._weights)
         delta_q = q - self._state.previous_quality
 
-        done = is_noop or step_num >= self._max_steps
+        done = is_noop or step_num >= self._active_max_steps
 
         reward = REWARD_SCALE * delta_q + STEP_PENALTY
         if done:
