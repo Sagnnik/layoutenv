@@ -1,16 +1,28 @@
 """
 Hackathon-facing grader adapters.
 
-These wrappers expose one callable per task in a conventional top-level module.
-They delegate to the canonical grading logic in grader.py while accepting a
-variety of payload shapes that hidden validators may provide.
+Each grader function accepts arbitrary positional/keyword arguments
+(the hidden validator may pass different payload shapes) and returns
+a **plain float** strictly inside (0, 1).
+
+OpenEnv submission validation rejects exact 0.0 and 1.0 task scores.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
-from grader import TaskGrade, grade_episode, score_from_q_delta
+from grader import grade_episode, score_from_q_delta
+
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+_EPS = 0.01
+
+
+def _safe_score(raw: float) -> float:
+    """Clamp a raw score strictly inside (0, 1) and round to 2 dp."""
+    return round(min(max(float(raw), _EPS), 1.0 - _EPS), 2)
 
 
 def _maybe_float(value: Any) -> Optional[float]:
@@ -58,49 +70,35 @@ def _extract_q_delta(payload: Any) -> Optional[float]:
     return None
 
 
-def _build_grade_dict(task_id: str, q_delta: Optional[float]) -> Dict[str, Any]:
-    safe_q_delta = 0.0 if q_delta is None else q_delta
-    if q_delta is None:
-        score = score_from_q_delta(safe_q_delta)
-        passed = False
-        return {
-            "task_id": task_id,
-            "score": score,
-            "passed": passed,
-            "success": passed,
-            "q_delta": safe_q_delta,
-            "breakdown": {"q_delta": safe_q_delta},
-        }
-
-    grade: TaskGrade = grade_episode(
-        task_id=task_id,
-        initial_quality=0.0,
-        final_quality=safe_q_delta,
-    )
-    return {
-        "task_id": task_id,
-        "score": grade.score,
-        "passed": grade.success,
-        "success": grade.success,
-        "q_delta": grade.q_delta,
-        "breakdown": {"q_delta": grade.q_delta},
-    }
-
-
-def _resolve_q_delta(result: Any, kwargs: Dict[str, Any]) -> Optional[float]:
+def _resolve_q_delta(result: Any, kwargs: dict) -> Optional[float]:
     q_delta = _extract_q_delta(kwargs)
     if q_delta is not None:
         return q_delta
     return _extract_q_delta(result)
 
 
-def grade_easy(result: Any = None, **kwargs: Any) -> Dict[str, Any]:
-    return _build_grade_dict("easy", _resolve_q_delta(result, kwargs))
+# ── public grader functions (return float) ───────────────────────────────────
 
 
-def grade_medium(result: Any = None, **kwargs: Any) -> Dict[str, Any]:
-    return _build_grade_dict("medium", _resolve_q_delta(result, kwargs))
+def grade_easy(result: Any = None, **kwargs: Any) -> float:
+    q_delta = _resolve_q_delta(result, kwargs)
+    if q_delta is None:
+        return _safe_score(score_from_q_delta(0.0))
+    grade = grade_episode(task_id="easy", initial_quality=0.0, final_quality=q_delta)
+    return _safe_score(grade.score)
 
 
-def grade_hard(result: Any = None, **kwargs: Any) -> Dict[str, Any]:
-    return _build_grade_dict("hard", _resolve_q_delta(result, kwargs))
+def grade_medium(result: Any = None, **kwargs: Any) -> float:
+    q_delta = _resolve_q_delta(result, kwargs)
+    if q_delta is None:
+        return _safe_score(score_from_q_delta(0.0))
+    grade = grade_episode(task_id="medium", initial_quality=0.0, final_quality=q_delta)
+    return _safe_score(grade.score)
+
+
+def grade_hard(result: Any = None, **kwargs: Any) -> float:
+    q_delta = _resolve_q_delta(result, kwargs)
+    if q_delta is None:
+        return _safe_score(score_from_q_delta(0.0))
+    grade = grade_episode(task_id="hard", initial_quality=0.0, final_quality=q_delta)
+    return _safe_score(grade.score)

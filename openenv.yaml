@@ -10,14 +10,15 @@ tasks:
     name: Easy Layout Cleanup
     description: Improve a lightly perturbed poster layout.
     difficulty: easy
-    grader: "graders:grade_easy"
+    grader: graders.grade_easy
   - id: medium
     name: Medium Layout Cleanup
     description: Improve a moderately perturbed poster layout.
     difficulty: medium
-    grader: "graders:grade_medium"
+    grader: graders.grade_medium
   - id: hard
     name: Hard Layout Cleanup
     description: Improve a heavily perturbed poster layout.
     difficulty: hard
-    grader: "graders:grade_hard"
+    grader: graders.grade_hard
+
