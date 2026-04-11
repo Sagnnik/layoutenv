@@ -1,29 +1,42 @@
 """
 Hackathon-facing grader adapters.
 
-Each grader function accepts arbitrary positional/keyword arguments
-(the hidden validator may pass different payload shapes) and returns
-a **plain float** strictly inside (0, 1).
+This module has ZERO external dependencies — no openenv, no FastAPI, no
+project-local modules. This makes it instantly importable by the hidden
+validator without triggering import errors or framework bootstrapping.
 
-OpenEnv submission validation rejects exact 0.0 and 1.0 task scores.
+Each grader function returns a plain float strictly inside (0, 1).
 """
 
 from __future__ import annotations
 
 from typing import Any, Optional
 
-from grader import grade_episode, score_from_q_delta
 
-
-# ── helpers ──────────────────────────────────────────────────────────────────
+# ── scoring logic (self-contained, no imports from grader.py) ────────────────
 
 _EPS = 0.01
+
+_TASK_SUCCESS_Q_DELTA = {
+    "easy": 0.05,
+    "medium": 0.1,
+    "hard": 0.15,
+}
 
 
 def _safe_score(raw: float) -> float:
     """Clamp a raw score strictly inside (0, 1) and round to 2 dp."""
     return round(min(max(float(raw), _EPS), 1.0 - _EPS), 2)
 
+
+def _score_from_q_delta(q_delta: float) -> float:
+    """Map quality delta to a score strictly inside (0, 1)."""
+    linear = (q_delta + 2.0) / 4.0
+    clamped = min(max(linear, 0.0), 1.0)          # [0, 1]
+    return min(max(clamped, 0.05), 0.95)           # (0, 1) with margin
+
+
+# ── payload extraction helpers ───────────────────────────────────────────────
 
 def _maybe_float(value: Any) -> Optional[float]:
     try:
@@ -83,22 +96,19 @@ def _resolve_q_delta(result: Any, kwargs: dict) -> Optional[float]:
 def grade_easy(result: Any = None, **kwargs: Any) -> float:
     q_delta = _resolve_q_delta(result, kwargs)
     if q_delta is None:
-        return _safe_score(score_from_q_delta(0.0))
-    grade = grade_episode(task_id="easy", initial_quality=0.0, final_quality=q_delta)
-    return _safe_score(grade.score)
+        return _safe_score(_score_from_q_delta(0.0))
+    return _safe_score(_score_from_q_delta(q_delta))
 
 
 def grade_medium(result: Any = None, **kwargs: Any) -> float:
     q_delta = _resolve_q_delta(result, kwargs)
     if q_delta is None:
-        return _safe_score(score_from_q_delta(0.0))
-    grade = grade_episode(task_id="medium", initial_quality=0.0, final_quality=q_delta)
-    return _safe_score(grade.score)
+        return _safe_score(_score_from_q_delta(0.0))
+    return _safe_score(_score_from_q_delta(q_delta))
 
 
 def grade_hard(result: Any = None, **kwargs: Any) -> float:
     q_delta = _resolve_q_delta(result, kwargs)
     if q_delta is None:
-        return _safe_score(score_from_q_delta(0.0))
-    grade = grade_episode(task_id="hard", initial_quality=0.0, final_quality=q_delta)
-    return _safe_score(grade.score)
+        return _safe_score(_score_from_q_delta(0.0))
+    return _safe_score(_score_from_q_delta(q_delta))

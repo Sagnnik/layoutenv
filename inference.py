@@ -91,11 +91,12 @@ def log_step(step: int, action_str: str, reward: float, done: bool, error: Optio
     )
 
 
-def log_end(success: bool, steps: int, rewards: List[float]) -> None:
+def log_end(task: str, success: bool, steps: int, score: float, rewards: List[float]) -> None:
     safe_rewards = [_clamp_reward(r) for r in rewards]
     rewards_str = ",".join(f"{r:.2f}" for r in safe_rewards)
+    safe_score = _clamp_reward(score)
     print(
-        f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}",
+        f"[END] task={task} success={str(success).lower()} steps={steps} score={safe_score:.2f} rewards={rewards_str}",
         flush=True,
     )
 
@@ -260,11 +261,14 @@ async def run_episode(
     except Exception as exc:
         run_error = exc
     finally:
+        # Compute a safe score for the [END] line.
+        # If grading happened, use grade.score; otherwise use 0.5 (neutral).
+        end_score = summary.get("score", 0.5)
         try:
             await env.close()
         except Exception as close_error:
             print(f"[DEBUG] env.close() error (container cleanup): {close_error}", file=sys.stderr, flush=True)
-        log_end(success=success, steps=steps_taken, rewards=rewards)
+        log_end(task=task_id, success=success, steps=steps_taken, score=end_score, rewards=rewards)
     if run_error is not None:
         raise run_error
     return summary
