@@ -503,7 +503,7 @@ TERMINAL_BONUS_SCALE = 5.0
 TERMINAL_PENALTY = -1.0
 # Align terminal shaping with the easiest grader delta threshold.
 Q_DELTA_THRESHOLD = 0.05
-VISIBLE_REWARD_EPS = 0.01
+VISIBLE_REWARD_EPS = 0.05
 
 
 def _normalize_visible_reward(raw_reward: float | int) -> float:

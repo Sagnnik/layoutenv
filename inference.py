@@ -11,6 +11,7 @@ STDOUT FORMAT
 import argparse
 import asyncio
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -39,6 +40,8 @@ BENCHMARK = os.getenv("LAYOUT_BENCHMARK", "layoutenv")
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.0"))
 MAX_TOKENS = 200
 SUCCESS_Q_DELTA = 0.1
+# Clamp epsilon — keep printed rewards strictly inside (0, 1).
+_REWARD_EPS = 0.05
 PRINT_SUMMARY_STDERR = os.getenv("PRINT_SUMMARY_STDERR", "0") == "1"
 EARLY_STOP_ON_SUCCESS = os.getenv("EARLY_STOP_ON_SUCCESS", "1") == "1"
 
@@ -67,21 +70,30 @@ def resolve_background_image_path(sample: Dict[str, Any], dataset_json_path: str
     return abs_path
 
 
+def _clamp_reward(r: float) -> float:
+    """Ensure reward is strictly inside (0, 1) — never exact 0.0 or 1.0."""
+    if r is None or math.isnan(r) or math.isinf(r):
+        return 0.5
+    return min(max(float(r), _REWARD_EPS), 1.0 - _REWARD_EPS)
+
+
 def log_start(task: str, env: str, model: str) -> None:
     print(f"[START] task={task} env={env} model={model}", flush=True)
 
 
 def log_step(step: int, action_str: str, reward: float, done: bool, error: Optional[str]) -> None:
     error_val = error if error else "null"
+    safe_reward = _clamp_reward(reward)
     print(
-        f"[STEP] step={step} action={action_str} reward={reward:.2f} "
+        f"[STEP] step={step} action={action_str} reward={safe_reward:.2f} "
         f"done={str(done).lower()} error={error_val}",
         flush=True,
     )
 
 
 def log_end(success: bool, steps: int, rewards: List[float]) -> None:
-    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    safe_rewards = [_clamp_reward(r) for r in rewards]
+    rewards_str = ",".join(f"{r:.2f}" for r in safe_rewards)
     print(
         f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}",
         flush=True,
@@ -208,7 +220,7 @@ async def run_episode(
             action_str = action_to_string(action, raw)
             result = await env.step(action)
             obs = result.observation
-            reward = result.reward or 0.0
+            reward = _clamp_reward(result.reward)
             done = result.done
             raw_error = getattr(result, "last_action_error", None)
             if raw_error is None:

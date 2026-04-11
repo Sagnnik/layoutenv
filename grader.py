@@ -20,7 +20,7 @@ class TaskGrade:
     q_delta: float
 
 
-OPEN_INTERVAL_EPS = 1e-2
+OPEN_INTERVAL_EPS = 5e-2
 
 
 def _clamp01(x: float) -> float:
