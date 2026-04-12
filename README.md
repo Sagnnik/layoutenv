@@ -40,52 +40,6 @@ The task is designed for:
 
 ---
 
-## Why this is a Good RL Environment
-
-* **Interdependent State Space**: Editing one element affects others (alignment, spacing, occlusion), requiring global reasoning.
-* **Dense Reward Signal**: Step-wise improvement via ΔQ enables stable learning.
-* **Mixed Action Space**: Combines low-level edits (MOVE/RESIZE) with structural actions (ALIGN/SNAP).
-* **Long-Horizon Optimization**: Requires multi-step planning rather than greedy fixes.
-* **Multi-Modal Support**: Works with both structured (LLM) and visual (VLM) observations.
-* **Content Awareness**: Occlusion penalty introduces semantic reasoning over visual saliency.
-
----
-
-## Learning Signal (Proof of Concept)
-
-The environment provides a meaningful optimization signal:
-
-* Random policy → low / unstable quality score
-* Structured edits (ALIGN, SNAP) → consistent improvements in Q
-* Multi-step sequences → higher final layout quality
-
-This shows that agents can learn policies that improve layout structure over time.
-
----
-
-## Optimization Objective
-
-The agent maximizes a **Composite Quality Score (Q)** based on core design principles:
-
-### Penalties (lower is better)
-
-* **Overlap**: Element intersections
-* **Boundary**: Out-of-canvas violations
-* **Occlusion**: Covering visually important regions (content-aware)
-
-### Rewards (higher is better)
-
-* **Alignment**: Shared edges and centers
-* **Spacing**: Consistent gaps
-* **Plausibility**: Realistic layout structure
-
-Reward function:
-
-R_t = 10 · (Q_t - Q_{t-1}) - 0.05
-
-This encourages steady improvements while penalizing inefficient actions.
-Terminal bonus is applied for significant overall improvement.
-
 ---
 
 ## Why this is a Good RL Environment
@@ -94,6 +48,8 @@ Terminal bonus is applied for significant overall improvement.
 - **Mixed Action Complexity**: The environment combines low-level positioning (`MOVE`, `RESIZE`) with high-level structural primitives (`ALIGN`, `SNAP`), allowing for research into hierarchical policy learning and action selection.
 - **Visual & Semantic Modalities**: Supports both coordinate-based (LLM) and raw image/rendering-based (VLM) observation spaces, making it a versatile benchmark for multi-modal agents.
 - **Real-World Utility**: Layout refinement is a high-value task in design automation, presenting a clear path from RL training to practical application in creative tools.
+
+---
 
 ## Learning Signal (Proof of Concept)
 
@@ -104,16 +60,21 @@ The environment provides a meaningful optimization signal:
 
 This demonstrates that agents can learn policies that improve layout structure over time.
 
+---
+
 ## Optimization Objective
 
 The primary goal is to maximize the **Composite Quality Score ($Q$)**, which evaluates several core design principles:
-- **Penalties (Lower is better)**:
-  - **Overlap**: Pairwise element intersections.
-  - **Boundary**: Keeping all elements within the [0, 1] canvas.
-- **Rewards (Higher is better)**:
-  - **Alignment**: Shared edges and centers between elements.
-  - **Spacing**: Consistency of horizontal and vertical gaps.
-  - **Plausibility**: Statistical adherence to standard design distributions.
+
+### Penalties (Lower is better)
+- **Overlap**: Pairwise element intersections.
+- **Boundary**: Keeping all elements within the [0, 1] canvas.
+- **Occlusion**: Covering visually important regions (content-aware).
+
+### Rewards (Higher is better)
+- **Alignment**: Shared edges and centers between elements.
+- **Spacing**: Consistency of horizontal and vertical gaps.
+- **Plausibility**: Statistical adherence to standard design distributions.
 
 The agent receives a shaped reward $R_t = 10 \cdot (Q_t - Q_{t-1}) - 0.05$, incentivizing steady quality improvements while discouraging inefficient step usage. A terminal bonus is awarded for achieving significant overall improvement ($Q_{final} - Q_{initial} \ge 0.05$).
 
