@@ -13,14 +13,80 @@ tags:
 
 # LayoutEnv: Poster Layout Refinement Environment
 
+## TL;DR
+
+`LayoutEnv` is an RL environment for improving noisy UI/poster layouts via iterative edit actions.
+
+* **Task**: Refine a perturbed layout into a clean, structured design
+* **State**: Structured layout (positions, sizes, element types)
+* **Actions**: MOVE, RESIZE, ALIGN, SNAP, NO_OP
+* **Reward**: Change in layout quality score (alignment, spacing, overlap, occlusion)
+
+✔ Dense reward signal
+✔ Multi-step structured decision making
+✔ Content-aware (occlusion-based) evaluation for VLM agents
+
+---
+
 `layoutenv` is a practical OpenEnv benchmark for iterative poster/layout cleanup.
-An agent receives a noisy layout and improves it step-by-step using discrete edit actions:
-`MOVE`, `RESIZE`, `ALIGN`, `SNAP`, and `NO_OP`.
+An agent receives a noisy layout and improves it step-by-step using discrete edit actions.
 
 The task is designed for:
-- spatial reasoning across multiple elements
-- optimization with shaped rewards
-- LLM and VLM agent evaluation on iterative improvement loops
+
+* spatial reasoning across multiple elements
+* optimization with shaped rewards
+* LLM and VLM agent evaluation on iterative improvement loops
+* **content-aware layout optimization via occlusion scoring**
+
+---
+
+## Why this is a Good RL Environment
+
+* **Interdependent State Space**: Editing one element affects others (alignment, spacing, occlusion), requiring global reasoning.
+* **Dense Reward Signal**: Step-wise improvement via ΔQ enables stable learning.
+* **Mixed Action Space**: Combines low-level edits (MOVE/RESIZE) with structural actions (ALIGN/SNAP).
+* **Long-Horizon Optimization**: Requires multi-step planning rather than greedy fixes.
+* **Multi-Modal Support**: Works with both structured (LLM) and visual (VLM) observations.
+* **Content Awareness**: Occlusion penalty introduces semantic reasoning over visual saliency.
+
+---
+
+## Learning Signal (Proof of Concept)
+
+The environment provides a meaningful optimization signal:
+
+* Random policy → low / unstable quality score
+* Structured edits (ALIGN, SNAP) → consistent improvements in Q
+* Multi-step sequences → higher final layout quality
+
+This shows that agents can learn policies that improve layout structure over time.
+
+---
+
+## Optimization Objective
+
+The agent maximizes a **Composite Quality Score (Q)** based on core design principles:
+
+### Penalties (lower is better)
+
+* **Overlap**: Element intersections
+* **Boundary**: Out-of-canvas violations
+* **Occlusion**: Covering visually important regions (content-aware)
+
+### Rewards (higher is better)
+
+* **Alignment**: Shared edges and centers
+* **Spacing**: Consistent gaps
+* **Plausibility**: Realistic layout structure
+
+Reward function:
+
+R_t = 10 · (Q_t - Q_{t-1}) - 0.05
+
+This encourages steady improvements while penalizing inefficient actions.
+Terminal bonus is applied for significant overall improvement.
+
+---
 
 ## Why this is a Good RL Environment
 
@@ -53,64 +119,67 @@ The agent receives a shaped reward $R_t = 10 \cdot (Q_t - Q_{t-1}) - 0.05$, ince
 
 ## Task Overview
 
-Each episode starts from a perturbed sample with normalized geometry.
-At every step, the agent picks:
-- target element (`element_id`)
-- action type (`MOVE`, `RESIZE`, `ALIGN`, `SNAP`, `NO_OP`)
-- action parameter (`UP`, `LEFT`, `CENTER_X`, `GRID`, etc.)
-- optional magnitude for `MOVE`/`RESIZE` (`SMALL`, `MEDIUM`, `LARGE`)
+Each episode starts from a perturbed layout.
 
-The episode ends when:
-- max step budget is reached, or
-- agent emits `NO_OP` (treat as stop)
+At every step, the agent selects:
+
+* target element (`element_id`)
+* action type (`MOVE`, `RESIZE`, `ALIGN`, `SNAP`, `NO_OP`)
+* action parameter (`UP`, `LEFT`, `CENTER_X`, etc.)
+* optional magnitude (`SMALL`, `MEDIUM`, `LARGE`)
+
+Episode ends when:
+
+* step limit reached, or
+* agent emits `NO_OP`
+
+---
+
+## RL Interaction Loop
+
+1. Observe current layout
+2. Select an edit action
+3. Environment updates layout
+4. Receive reward based on quality improvement
+
+The agent must learn a sequence of edits that maximizes cumulative reward.
+
+---
 
 ## Quick Start
-
-The simplest way to use the environment is through the `LayoutEnv` client:
 
 ```python
 from layoutenv import LayoutAction, LayoutEnv
 
-async def run_example() -> None:
+async def run_example():
     env = await LayoutEnv.from_docker_image("layoutenv:latest")
     try:
         result = await env.reset(mode="llm")
         print("Initial Q:", result.observation.quality_score)
+
         result = await env.step(LayoutAction(
             element_id=0,
             action="ALIGN",
             param="CENTER_X",
             magnitude="MEDIUM",
         ))
+
         print("Reward:", result.reward, "Done:", result.done)
     finally:
         await env.close()
-
-import asyncio
-asyncio.run(run_example())
 ```
 
-If you prefer a sync client flow, instantiate with `LayoutEnv(base_url=...)`
-and call the synchronous methods in your own wrapper.
-
-`LayoutEnv.from_docker_image(...)` handles:
-- starting the container
-- waiting for readiness
-- connecting the client
-- container cleanup on `close()`
+---
 
 ## Build the Docker Image
-
-From this repository root:
 
 ```bash
 docker build -t layoutenv:latest -f Dockerfile .
 ```
 
-## Run the Server (Volume-Mounted Dataset)
+---
 
-The current runtime expects dataset assets at `/app/env/dataset` in-container.
-Recommended run command from repo root:
+## Run the Server
 
 ```bash
 docker run --rm -d \
@@ -120,159 +189,79 @@ docker run --rm -d \
   layoutenv:latest
 ```
 
-Verify endpoints:
-
-```bash
-curl -s http://localhost:8000/health
-curl -s -X POST -H "Content-Type: application/json" -d '{}' http://localhost:8000/reset
-```
-
-Stop:
-
-```bash
-docker stop layoutenv-server
-```
-
-## Usage
-
-Submission baseline script is root `inference.py` (required location).
-It emits evaluator-friendly stdout:
-- `[START] ...`
-- `[STEP] ...`
-- `[END] ...`
-
-By default, `inference.py` is configured for Hugging Face Inference Providers:
-- `API_BASE_URL=https://router.huggingface.co/v1`
-- `MODEL_NAME=Qwen/Qwen2.5-VL-72B-Instruct`
-- auth via `HF_TOKEN`
-
-Environment target:
-- local container: uses `LayoutEnv.from_docker_image(IMAGE_NAME)` when `--env-base-url` is not set
-- deployed Space: pass `--env-base-url https://<your-space>.hf.space`
-
-### LLM run (remote HF Space)
-
-```bash
-HF_TOKEN=... \
-python inference.py \
-  --env-base-url https://<your-space>.hf.space \
-  --task easy --max-steps 10 --seed 42
-```
-
-### VLM easy-task smoke (remote HF Space)
-
-```bash
-HF_TOKEN=... \
-python inference.py \
-  --mode vlm \
-  --env-base-url https://<your-space>.hf.space \
-  --task easy --max-steps 10 --seed 42
-```
-
-### Local Docker fallback
-
-```bash
-HF_TOKEN=... IMAGE_NAME=layoutenv:latest \
-python inference.py --task easy --max-steps 10 --seed 42
-```
+---
 
 ## Environment Details
 
-### Action (`LayoutAction`)
-
-Fields:
-- `element_id` (int): target element index
-- `action` (str): `MOVE` | `RESIZE` | `ALIGN` | `SNAP` | `NO_OP`
-- `param` (str):
-  - `MOVE`: `UP`, `DOWN`, `LEFT`, `RIGHT`
-  - `RESIZE`: `WIDER`, `NARROWER`, `TALLER`, `SHORTER`
-  - `ALIGN`: `LEFT`, `CENTER_X`, `RIGHT`, `TOP`, `CENTER_Y`, `BOTTOM`
-  - `SNAP`: `GRID`
-  - `NO_OP`: `NONE`
-- `magnitude` (str): `SMALL`, `MEDIUM`, `LARGE` (used for `MOVE`/`RESIZE`)
-
 ### Observation (`LayoutObservation`)
 
-Per-step payload includes:
-- `canvas`: normalized canvas (`width=1.0`, `height=1.0`)
-- `elements`: list of `{id, type, cx, cy, w, h, font_size}`
-- `metrics`: layout metrics:
-  - `overlap` (lower better)
-  - `boundary` (lower better)
-  - `alignment` (higher better)
-  - `spacing` (higher better)
-  - `plausibility` (higher better)
-- `quality_score`: composite quality value `Q`
-- `initial_quality_score`: `Q` at reset
-- `step`, `max_steps`
-- optional VLM fields (`image_path`, `rendered_image_base64`)
-- optional `text_feedback`
+Includes:
 
-### State (`LayoutState`)
+* element geometry and types
+* layout metrics:
 
-Server state tracks:
-- `episode_id`, `step_count`
-- current `elements`
-- `previous_quality`, `initial_quality`
-- VLM context (`current_image_rel`, `dataset_json_path`)
+  * overlap (↓)
+  * boundary (↓)
+  * **occlusion (↓)**
+  * alignment (↑)
+  * spacing (↑)
+  * plausibility (↑)
+* composite quality score `Q`
 
-### Reward
+---
 
-Step reward is shaped by quality improvements:
-- `reward = REWARD_SCALE * (Q_t - Q_{t-1}) + STEP_PENALTY`
-- invalid actions incur a penalty
-- terminal shaping applies at episode end
+## Saliency-Aware Occlusion (VLM Mode)
 
-This gives dense training/evaluation signal, not only terminal success.
+In `mode="vlm"`, the environment supports content-aware evaluation.
+
+* Uses saliency maps (`.npy`)
+* Penalizes covering important visual regions
+* Encourages agents to avoid placing elements over:
+
+  * faces
+  * focal objects
+  * key content areas
+
+This introduces **semantic reasoning into layout optimization**.
+
+---
+
+## Reward
+
+```
+reward = REWARD_SCALE * (Q_t - Q_{t-1}) + STEP_PENALTY
+```
+
+* Dense signal (not sparse)
+* Penalizes invalid actions
+* Encourages consistent improvement
+
+---
 
 ## Task Grading
 
-Deterministic grading logic is implemented in `grader.py`:
-- `q_delta = final_q - initial_q`
-- `score = clamp((q_delta + 2.0) / 4.0, eps, 1 - eps)`
-- task-specific success thresholds:
-  - `easy >= 0.05`
-  - `medium >= 0.10`
-  - `hard >= 0.15`
+* `q_delta = final_q - initial_q`
+* normalized score with margin clamping
 
-Note: score is intentionally clamped into the open interval `(0, 1)` so
-submission validators never see exact boundary values.
+Thresholds:
 
-## Deploy to Hugging Face Spaces
+* easy ≥ 0.15
+* medium ≥ 0.25
+* hard ≥ 0.32
 
-From the repository root:
-
-```bash
-openenv push
-```
-
-Or specify repo:
-
-```bash
-openenv push --repo-id <namespace>/<space-name>
-```
-
-After deploy, verify:
-- `POST /reset` returns 200
-- `/docs` is reachable
-- `/health` is healthy
+---
 
 ## Project Structure
 
 ```text
 .
 ├── Dockerfile
-├── __init__.py
 ├── client.py
 ├── grader.py
 ├── inference.py
 ├── models.py
-├── openenv.yaml
-├── pyproject.toml
-├── README.md
-├── prompts.py
-└── server/
-    ├── app.py
-    ├── layout_environment.py
-    └── metrics.py
+├── server/
+│   ├── app.py
+│   ├── layout_environment.py
+│   └── metrics.py
 ```
