@@ -21,6 +21,7 @@ The task is designed for:
 - spatial reasoning across multiple elements
 - optimization with shaped rewards
 - LLM and VLM agent evaluation on iterative improvement loops
+- Content-aware evaluation (occlusion tracking) for multimodal agents
 
 ## Task Overview
 
@@ -170,6 +171,7 @@ Per-step payload includes:
 - `metrics`: layout metrics:
   - `overlap` (lower better)
   - `boundary` (lower better)
+  - `occlusion` (lower better; content-aware saliency tracking)
   - `alignment` (higher better)
   - `spacing` (higher better)
   - `plausibility` (higher better)
@@ -185,7 +187,15 @@ Server state tracks:
 - `episode_id`, `step_count`
 - current `elements`
 - `previous_quality`, `initial_quality`
-- VLM context (`current_image_rel`, `dataset_json_path`)
+- VLM context (`current_image_rel`, `current_saliency_rel`, `dataset_json_path`)
+
+### Saliency-Aware Occlusion (VLM Only)
+
+When initialized in `mode="vlm"`, the environment supports Content-Aware metrics.
+If the task sample provides a `saliency_image_path` (pointing to a `.npy` file),
+the environment calculates an `occlusion` penalty based on how much salient
+area is covered by layout elements. This enables agents to avoid placing
+text over faces or focal objects.
 
 ### Reward
 
@@ -202,12 +212,13 @@ Deterministic grading logic is implemented in `grader.py`:
 - `q_delta = final_q - initial_q`
 - `score = clamp((q_delta + 2.0) / 4.0, eps, 1 - eps)`
 - task-specific success thresholds:
-  - `easy >= 0.05`
-  - `medium >= 0.10`
-  - `hard >= 0.15`
+  - `easy >= 0.15`
+  - `medium >= 0.25`
+  - `hard >= 0.32`
 
-Note: score is intentionally clamped into the open interval `(0, 1)` so
-submission validators never see exact boundary values.
+Note: All scores and rewards are strictly margin-clamped into the open interval `(0, 1)`
+using a safety epsilon (approx. `0.05` margin). This ensures 100% compliance with
+submission validators that reject boundary values of exactly `0.0` or `1.0`.
 
 ## Deploy to Hugging Face Spaces
 

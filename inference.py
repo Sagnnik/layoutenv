@@ -1,18 +1,20 @@
 """
 Inference Script — Layout RL Environment
 ===================================
-STDOUT FORMAT
+STDOUT FORMAT (LOCKED — do not change field order or names)
 - The script emits exactly:
-    [START] ...
-    [STEP] ...
-    [END] ...
+    [START] task=<id> env=<benchmark> model=<model_name>
+    [STEP]  step=<n> action=<str> reward=<0.00> done=<true|false> error=<msg|null>
+    [END]   task=<id> success=<true|false> steps=<n> score=<0.00> rewards=<r1,r2,...>
 """
 
 import argparse
 import asyncio
+import copy
 import json
 import math
 import os
+import random
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -34,13 +36,12 @@ IMAGE_NAME = os.getenv("IMAGE_NAME", "layoutenv:latest")
 ENV_BASE_URL = os.getenv("LAYOUTENV_BASE_URL") or os.getenv("ENV_BASE_URL", "https://ryz3n758-layoutenv.hf.space")
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-VL-72B-Instruct")
-HF_TOKEN = os.getenv("HF_TOKEN")
 TASK_NAME = os.getenv("LAYOUT_TASK", "layout-refinement")
 BENCHMARK = os.getenv("LAYOUT_BENCHMARK", "layoutenv")
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.0"))
 MAX_TOKENS = 200
 SUCCESS_Q_DELTA = 0.1
-# Clamp epsilon — keep printed rewards strictly inside (0, 1).
+# Clamp epsilon — keep printed rewards/scores strictly inside (0, 1).
 _REWARD_EPS = 0.05
 PRINT_SUMMARY_STDERR = os.getenv("PRINT_SUMMARY_STDERR", "0") == "1"
 EARLY_STOP_ON_SUCCESS = os.getenv("EARLY_STOP_ON_SUCCESS", "1") == "1"
@@ -51,12 +52,29 @@ TASK_SAMPLES_JSON = DATASET_DIR / "task_samples.json"
 DATASET_JSON_LOCAL = os.getenv("LAYOUT_DATASET", str(DATASET_DIR / "genposter_5000_images.json"))
 DATASET_JSON_SERVER = os.getenv("LAYOUT_DATASET_SERVER", "/app/env/dataset/genposter_5000_images.json")
 USE_STRUCTURED_OUTPUT = os.getenv("USE_STRUCTURED_OUTPUT", "0") == "1"
-MAX_HISTORY_TURNS = int(os.getenv("MAX_HISTORY_TURNS", "12"))
+# Keep only the last 3 turns by default.
+MAX_HISTORY_TURNS = int(os.getenv("MAX_HISTORY_TURNS", "5"))
 
 
 def load_task_samples(path: str | Path = TASK_SAMPLES_JSON) -> List[Dict[str, Any]]:
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def perturb_sample(sample: Dict[str, Any], noise: float = 0.1) -> Dict[str, Any]:
+    perturbed = copy.deepcopy(sample)
+    for elem in perturbed.get("elements", []):
+        x1, y1, x2, y2 = elem["bbox"]
+        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+        w, h = x2 - x1, y2 - y1
+        cx += random.uniform(-noise, noise)
+        cy += random.uniform(-noise, noise)
+        cx = max(0.0, min(1.0, cx))
+        cy = max(0.0, min(1.0, cy))
+        w = max(0.01, min(1.0, w))
+        h = max(0.01, min(1.0, h))
+        elem["bbox"] = [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2]
+    return perturbed
 
 
 def resolve_background_image_path(sample: Dict[str, Any], dataset_json_path: str) -> Optional[Path]:
@@ -70,9 +88,11 @@ def resolve_background_image_path(sample: Dict[str, Any], dataset_json_path: str
     return abs_path
 
 
+# ── STDOUT helpers (format LOCKED) ───────────────────────────────────────────
+
 def _clamp_reward(r: float) -> float:
-    """Ensure reward is strictly inside (0, 1) — never exact 0.0 or 1.0."""
-    if r is None or math.isnan(r) or math.isinf(r):
+    """Ensure reward/score is strictly inside (0, 1) — never exact 0.0 or 1.0."""
+    if r is None or (isinstance(r, float) and (math.isnan(r) or math.isinf(r))):
         return 0.5
     return min(max(float(r), _REWARD_EPS), 1.0 - _REWARD_EPS)
 
@@ -96,10 +116,13 @@ def log_end(task: str, success: bool, steps: int, score: float, rewards: List[fl
     rewards_str = ",".join(f"{r:.2f}" for r in safe_rewards)
     safe_score = _clamp_reward(score)
     print(
-        f"[END] task={task} success={str(success).lower()} steps={steps} score={safe_score:.2f} rewards={rewards_str}",
+        f"[END] task={task} success={str(success).lower()} steps={steps} "
+        f"score={safe_score:.2f} rewards={rewards_str}",
         flush=True,
     )
 
+
+# ── Observation / action helpers ─────────────────────────────────────────────
 
 def obs_to_dict(obs: LayoutObservation, rendered_b64: Optional[str] = None) -> dict:
     return {
@@ -121,7 +144,7 @@ async def get_layout_action(
     mode: str = "llm",
     rendered_b64: Optional[str] = None,
     pending_feedback: Optional[str] = None,
-) -> tuple[Optional[LayoutAction], str, bool]:
+) -> tuple[Optional[LayoutAction], str, bool, Optional[str]]:
     system_prompt, format_user_msg = get_prompts(mode)
     obs_payload = obs_to_dict(obs, rendered_b64=rendered_b64)
     if pending_feedback:
@@ -138,20 +161,35 @@ async def get_layout_action(
     }
     if USE_STRUCTURED_OUTPUT:
         api_kwargs["response_format"] = ACTION_JSON_SCHEMA
+    error_msg: Optional[str] = None
     try:
         completion = await asyncio.to_thread(client.chat.completions.create, **api_kwargs)
         raw = (completion.choices[0].message.content or "").strip()
-    except Exception:
+    except Exception as exc:
+        error_msg = str(exc)
         raw = ""
     action = parse_action(raw)
     parse_failed = action is None
-    history.append({"role": "user", "content": user_content})
+    # Keep history compact in VLM mode: only persist text from user content
+    # and never keep image payloads from previous turns.
+    if mode == "vlm" and isinstance(user_content, list):
+        text_parts = [
+            part.get("text", "")
+            for part in user_content
+            if isinstance(part, dict) and part.get("type") == "text"
+        ]
+        history_user_content: Any = "\n".join(p for p in text_parts if p).strip()
+    else:
+        history_user_content = user_content
+    history.append({"role": "user", "content": history_user_content})
     history.append({"role": "assistant", "content": raw if raw else "{}"})
     # Keep only the most recent N turns (2 messages per turn).
     keep_messages = max(0, MAX_HISTORY_TURNS * 2)
-    if keep_messages and len(history) > keep_messages:
+    if keep_messages == 0:
+        history.clear()
+    elif len(history) > keep_messages:
         del history[:-keep_messages]
-    return action, raw, parse_failed
+    return action, raw, parse_failed, error_msg
 
 
 def action_to_string(action: Optional[LayoutAction], raw: str) -> str:
@@ -162,6 +200,8 @@ def action_to_string(action: Optional[LayoutAction], raw: str) -> str:
         s += f",mag={action.magnitude}"
     return s + ")"
 
+
+# ── Episode runner ───────────────────────────────────────────────────────────
 
 async def run_episode(
     client: OpenAI,
@@ -174,27 +214,37 @@ async def run_episode(
     max_steps_override: Optional[int] = None,
 ) -> Dict[str, Any]:
     task_id = task_entry["task_id"]
+    sample = task_entry["sample"]
+    noise = task_entry.get("noise", 0.1)
     max_steps = task_entry.get("max_steps", 100)
     if max_steps_override is not None and max_steps_override > 0:
         max_steps = min(max_steps, max_steps_override)
+    if seed is not None:
+        random.seed(seed)
+    perturbed = perturb_sample(sample, noise=noise)
+
     log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
+
     rewards: List[float] = []
     steps_taken = 0
     success = False
+    # Default score for [END] if grading never runs (e.g. exception during reset).
+    end_score = 0.5
     summary: Dict[str, Any] = {
         "task_id": task_id,
         "success": False,
         "steps": 0,
-        "score": 0.0,
+        "score": end_score,
         "initial_q": 0.0,
         "final_q": 0.0,
         "q_delta": 0.0,
     }
     run_error: Optional[Exception] = None
+
     try:
         result = await env.reset(
             seed=seed,
-            task_id=task_id,
+            sample=perturbed,
             dataset_json_path=dataset_json_server,
             mode=mode,
             render_image_in_observation=True,
@@ -203,11 +253,12 @@ async def run_episode(
         initial_q = obs.quality_score
         history: List[dict] = []
         pending_feedback: Optional[str] = None
+
         for step in range(1, max_steps + 1):
             if result.done:
                 break
             rendered = obs.rendered_image_base64 if mode == "vlm" else None
-            action, raw, _parse_failed = await get_layout_action(
+            action, raw, parse_failed, api_error = await get_layout_action(
                 client,
                 history,
                 obs,
@@ -217,29 +268,35 @@ async def run_episode(
             )
             pending_feedback = None
             if action is None:
-                action = LayoutAction(element_id=0, action="NO_OP", param="NONE")
+                # Do not end the episode on parser/API failure; apply a safe no-op move.
+                action = LayoutAction(
+                    element_id=0,
+                    action="MOVE",
+                    param="UP",
+                    magnitude="SMALL",
+                )
             action_str = action_to_string(action, raw)
             result = await env.step(action)
             obs = result.observation
             reward = _clamp_reward(result.reward)
             done = result.done
-            raw_error = getattr(result, "last_action_error", None)
-            if raw_error is None:
-                metadata = getattr(obs, "metadata", None)
-                if isinstance(metadata, dict):
-                    raw_error = metadata.get("last_action_error")
+            error = "parse_error" if parse_failed else None
+            if api_error:
+                error = f"api_error:{api_error}"
+                print(f"[WARN] API exception at step {step}: {api_error}", file=sys.stderr, flush=True)
             if obs.text_feedback:
                 # Inject as part of next user payload to avoid consecutive user-role messages.
                 pending_feedback = obs.text_feedback
             rewards.append(reward)
             steps_taken = step
-            log_step(step, action_str, reward, done, raw_error)
+            log_step(step, action_str, reward, done, error)
             if EARLY_STOP_ON_SUCCESS:
                 q_delta_now = obs.quality_score - initial_q
                 if success_from_q_delta(task_id, q_delta_now, SUCCESS_Q_DELTA):
                     break
             if done:
                 break
+
         final_q = obs.quality_score
         q_delta = final_q - initial_q
         grade = grade_episode(
@@ -249,6 +306,7 @@ async def run_episode(
             success_q_delta=SUCCESS_Q_DELTA,
         )
         success = grade.success
+        end_score = grade.score
         summary = {
             "task_id": task_id,
             "success": grade.success,
@@ -261,18 +319,15 @@ async def run_episode(
     except Exception as exc:
         run_error = exc
     finally:
-        # Compute a safe score for the [END] line.
-        # If grading happened, use grade.score; otherwise use 0.5 (neutral).
-        end_score = summary.get("score", 0.5)
-        try:
-            await env.close()
-        except Exception as close_error:
-            print(f"[DEBUG] env.close() error (container cleanup): {close_error}", file=sys.stderr, flush=True)
+        # [END] must ALWAYS be emitted, even on exception (per guidelines).
         log_end(task=task_id, success=success, steps=steps_taken, score=end_score, rewards=rewards)
+
     if run_error is not None:
         raise run_error
     return summary
 
+
+# ── Main ─────────────────────────────────────────────────────────────────────
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Layout RL inference script")
@@ -288,21 +343,25 @@ async def main() -> None:
         "If set, skip local Docker startup.",
     )
     args = parser.parse_args()
-    if not HF_TOKEN:
-        raise RuntimeError("Missing required HF_TOKEN environment variable.")
+    api_key = os.getenv("HF_TOKEN")
+    if not api_key:
+        raise RuntimeError(
+            "Missing API key — set HF_TOKEN (required for submission), "
+            "or OPENAI_API_KEY/API_KEY for local testing."
+        )
     tasks = load_task_samples()
     if args.task:
         tasks = [t for t in tasks if t["task_id"] == args.task]
         if not tasks:
             raise RuntimeError(f"Task '{args.task}' not found in {TASK_SAMPLES_JSON}")
-    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+    client = OpenAI(base_url=API_BASE_URL, api_key=api_key)
+    if args.env_base_url:
+        env = LayoutEnv(base_url=args.env_base_url.rstrip("/"))
+    else:
+        env = await LayoutEnv.from_docker_image(IMAGE_NAME)
     results: List[Dict[str, Any]] = []
-    for task_entry in tasks:
-        if args.env_base_url:
-            env = LayoutEnv(base_url=args.env_base_url.rstrip("/"))
-        else:
-            env = await LayoutEnv.from_docker_image(IMAGE_NAME)
-        try:
+    try:
+        for task_entry in tasks:
             r = await run_episode(
                 client,
                 env,
@@ -313,9 +372,11 @@ async def main() -> None:
                 max_steps_override=args.max_steps,
             )
             results.append(r)
-        except Exception:
-            # run_episode always emits [END], then re-raises.
-            raise
+    finally:
+        try:
+            await env.close()
+        except Exception as e:
+            print(f"[DEBUG] env.close() error (container cleanup): {e}", file=sys.stderr, flush=True)
     if PRINT_SUMMARY_STDERR:
         print("\n=== Summary ===", file=sys.stderr, flush=True)
         for r in results:

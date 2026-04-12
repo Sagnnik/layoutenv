@@ -10,13 +10,9 @@ this environment is agnostic to how the initial layout was produced.
 """
 from __future__ import annotations
 import base64
-import copy
 import io
-import json
-import math
 from pathlib import Path
-import random
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Set
 from uuid import uuid4
 
 import numpy as np
@@ -35,6 +31,8 @@ from .metrics import (
     compute_all_metrics,
     quality_score,
 )
+
+CONTENT_AWARE_METRICS: Set[str] = {"occlusion"}
 
 
 # Single baked-in training-free layout (normalised bboxes).
@@ -99,41 +97,6 @@ def _default_stats_from_sample(sample: Dict[str, Any]) -> Dict[str, Any]:
 
 
 DEFAULT_STATS: Dict[str, Any] = _default_stats_from_sample(DEFAULT_LAYOUT_SAMPLE)
-SERVER_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SERVER_DIR.parent
-TASK_SAMPLES_PATH = REPO_ROOT / "dataset" / "task_samples.json"
-DEFAULT_DATASET_JSON_PATH = str(REPO_ROOT / "dataset" / "genposter_5000_images.json")
-
-
-def load_task_samples(path: Path = TASK_SAMPLES_PATH) -> Dict[str, Dict[str, Any]]:
-    with open(path, "r", encoding="utf-8") as f:
-        entries = json.load(f)
-    return {entry["task_id"]: entry for entry in entries}
-
-
-TASK_SAMPLE_MAP = load_task_samples()
-
-
-def _perturb_sample(
-    sample: Dict[str, Any],
-    noise: float,
-    *,
-    seed: Optional[int] = None,
-) -> Dict[str, Any]:
-    rng = random.Random(seed)
-    perturbed = copy.deepcopy(sample)
-    for elem in perturbed.get("elements", []):
-        x1, y1, x2, y2 = elem["bbox"]
-        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-        w, h = x2 - x1, y2 - y1
-        cx += rng.uniform(-noise, noise)
-        cy += rng.uniform(-noise, noise)
-        cx = max(0.0, min(1.0, cx))
-        cy = max(0.0, min(1.0, cy))
-        w = max(0.01, min(1.0, w))
-        h = max(0.01, min(1.0, h))
-        elem["bbox"] = [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2]
-    return perturbed
 
 
 def _sample_to_elements(sample: Dict) -> List[Dict]:
@@ -414,6 +377,24 @@ def _render_layout_on_background(
     return composed.convert("RGB")
 
 
+def _safe_load_saliency_array(path: Path) -> np.ndarray | None:
+    """
+    Best-effort saliency loader. Returns None on missing/invalid content.
+    Expected input is a 2D float-compatible numpy array.
+    """
+    if not path.is_file():
+        return None
+    try:
+        loaded = np.load(path)
+    except Exception:
+        return None
+    arr = np.asarray(loaded, dtype=np.float32)
+    if arr.ndim != 2 or arr.size == 0:
+        return None
+    arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+    return np.clip(arr, 0.0, None)
+
+
 def _pil_to_png_base64(img: Image.Image) -> str:
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
@@ -444,8 +425,9 @@ def _generate_text_feedback(
     boundary = metrics.get("boundary", 0.0)
     alignment = metrics.get("alignment", 1.0)
     spacing = metrics.get("spacing", 1.0)
+    occlusion = metrics.get("occlusion", 0.0)
 
-    penalties = {"overlap": overlap, "boundary": boundary}
+    penalties = {"overlap": overlap, "boundary": boundary, "occlusion": occlusion}
     worst_penalty_name = max(penalties, key=penalties.get)  # type: ignore[arg-type]
     worst_penalty_val = penalties[worst_penalty_name]
 
@@ -459,7 +441,7 @@ def _generate_text_feedback(
                 f"Overlap is high ({overlap:.3f}). "
                 "MOVE overlapping elements apart or RESIZE them smaller."
             )
-        else:
+        elif worst_penalty_name == "boundary":
             oob = [
                 e["id"] for e in elements
                 if _is_out_of_bounds(e)
@@ -474,6 +456,11 @@ def _generate_text_feedback(
                     f"Boundary penalty ({boundary:.3f}). "
                     "Some elements may be near the edge; MOVE inward."
                 )
+        else:
+            parts.append(
+                f"Occlusion is high ({occlusion:.3f}). "
+                "MOVE/RESIZE elements away from high-saliency regions."
+            )
     elif worst_reward_val < 0.5:
         if worst_reward_name == "alignment":
             parts.append(
@@ -502,20 +489,16 @@ REWARD_SCALE = 10.0
 TERMINAL_BONUS_SCALE = 5.0
 TERMINAL_PENALTY = -1.0
 # Align terminal shaping with the easiest grader delta threshold.
-Q_DELTA_THRESHOLD = 0.05
-VISIBLE_REWARD_EPS = 0.05
-
+Q_DELTA_THRESHOLD = 0.15
 
 def _normalize_visible_reward(raw_reward: float | int) -> float:
+    """Normalize raw unbounded rewards into a stable visible range.
+    Using tanh to squash safely into roughly (0, 1) before final clamping.
     """
-    Bound the externally visible reward to the open interval (0, 1).
-
-    The environment still computes its internal shaping reward in the native
-    scale, but the reward exposed through the OpenEnv API should remain
-    validator-friendly and render safely at 2 decimal places.
-    """
-    normalized = 1.0 / (1.0 + math.exp(-float(raw_reward)))
-    return min(max(normalized, VISIBLE_REWARD_EPS), 1.0 - VISIBLE_REWARD_EPS)
+    import math
+    # Scale such that a max bonus of ~5.0 maps near 0.9.
+    squashed = (math.tanh(float(raw_reward) / 5.0) + 1.0) / 2.0
+    return round(squashed, 4)
 
 
 class LayoutEnvironment(Environment):
@@ -547,7 +530,6 @@ class LayoutEnvironment(Environment):
         self._state = LayoutState(episode_id=str(uuid4()), step_count=0)
 
         self._max_steps = max_steps
-        self._active_max_steps = max_steps
         self._weights = weights
         self._stats: Dict[str, Any] = (
             DEFAULT_STATS if stats is None else stats
@@ -555,7 +537,11 @@ class LayoutEnvironment(Environment):
         self._mode: Literal["llm", "vlm"] = "llm"
         self._text_feedback: bool = True
         self._render_image_in_observation: bool = True
-        self._task_id: str = "default"
+        self._saliency_map: np.ndarray | None = None
+
+    def _active_content_metric_names(self) -> Set[str]:
+        # Global policy: content-aware metrics are VLM-only.
+        return CONTENT_AWARE_METRICS if self._mode == "vlm" else set()
 
     def _build_observation(
         self,
@@ -605,13 +591,12 @@ class LayoutEnvironment(Environment):
             elements=_round_elements(self._state.elements),
             metrics=metrics,
             step=step_num,
-            max_steps=self._active_max_steps,
+            max_steps=self._max_steps,
             quality_score=q,
             initial_quality_score=self._state.initial_quality,
             text_feedback=feedback,
-            reward=_normalize_visible_reward(reward),
+            reward=reward,
             done=done,
-            metadata={"task_id": self._task_id},
             image_path=image_path,
             rendered_image_base64=rendered_b64,
         )
@@ -622,7 +607,6 @@ class LayoutEnvironment(Environment):
         seed: Optional[int] = None,
         episode_id: Optional[str] = None,
         *,
-        task_id: Optional[str] = None,
         sample: Optional[Dict[str, Any]] = None,
         dataset_json_path: Optional[str] = None,
         background_image_base64: Optional[str] = None,
@@ -641,30 +625,7 @@ class LayoutEnvironment(Environment):
         if render_image_in_observation is not None:
             self._render_image_in_observation = render_image_in_observation
 
-        episode_max_steps = self._max_steps
-        selected_task_id = task_id or "default"
-        if sample is not None:
-            chosen = sample
-        elif task_id is not None:
-            if task_id not in TASK_SAMPLE_MAP:
-                raise ValueError(
-                    f"Unknown task_id '{task_id}'. Expected one of {sorted(TASK_SAMPLE_MAP)}"
-                )
-            task_entry = TASK_SAMPLE_MAP[task_id]
-            chosen = _perturb_sample(
-                task_entry["sample"],
-                float(task_entry.get("noise", 0.0)),
-                seed=seed,
-            )
-            episode_max_steps = int(task_entry.get("max_steps", self._max_steps))
-        else:
-            chosen = DEFAULT_LAYOUT_SAMPLE
-
-        self._active_max_steps = episode_max_steps
-        self._task_id = selected_task_id
-
-        if dataset_json_path is None:
-            dataset_json_path = DEFAULT_DATASET_JSON_PATH
+        chosen = sample if sample is not None else DEFAULT_LAYOUT_SAMPLE
 
         if self._mode == "vlm" and not chosen.get("image_path") and not background_image_base64:
             raise ValueError(
@@ -674,6 +635,9 @@ class LayoutEnvironment(Environment):
 
         current_image_rel = (
             chosen.get("image_path") if self._mode == "vlm" else None
+        )
+        current_saliency_rel = (
+            chosen.get("saliency_image_path") if self._mode == "vlm" else None
         )
 
         elements = _sample_to_elements(chosen)
@@ -685,18 +649,35 @@ class LayoutEnvironment(Environment):
             previous_quality=0.0,
             initial_quality=0.0,
             current_image_rel=current_image_rel,
+            current_saliency_rel=current_saliency_rel,
             dataset_json_path=dataset_json_path,
         )
 
         if background_image_base64:
             self._state._bg_image_base64 = background_image_base64
 
-        metrics = compute_all_metrics(self._state.elements, self._stats)
+        self._saliency_map = None
+        if (
+            self._mode == "vlm"
+            and self._state.current_saliency_rel
+            and self._state.dataset_json_path
+        ):
+            saliency_abs = _resolve_media_path(
+                self._state.dataset_json_path, self._state.current_saliency_rel
+            )
+            self._saliency_map = _safe_load_saliency_array(saliency_abs)
+
+        metrics = compute_all_metrics(
+            self._state.elements,
+            self._stats,
+            saliency_map=self._saliency_map,
+            content_metric_names=self._active_content_metric_names(),
+        )
         q = quality_score(metrics, self._weights)
         self._state.previous_quality = q
         self._state.initial_quality = q
 
-        return self._build_observation(0, False, 0.0, metrics, q)
+        return self._build_observation(0, False, _normalize_visible_reward(0.0), metrics, q)
 
     def step(self, action: LayoutAction) -> LayoutObservation:  # type: ignore[override]
         self._state.step_count += 1
@@ -705,9 +686,14 @@ class LayoutEnvironment(Environment):
         valid = action.is_valid(len(self._state.elements))
 
         if not valid:
-            metrics = compute_all_metrics(self._state.elements, self._stats)
+            metrics = compute_all_metrics(
+                self._state.elements,
+                self._stats,
+                saliency_map=self._saliency_map,
+                content_metric_names=self._active_content_metric_names(),
+            )
             q = quality_score(metrics, self._weights)
-            done = step_num >= self._active_max_steps
+            done = step_num >= self._max_steps
             reward = INVALID_ACTION_PENALTY + STEP_PENALTY
             if done:
                 q_delta = q - self._state.initial_quality
@@ -715,7 +701,7 @@ class LayoutEnvironment(Environment):
                     TERMINAL_BONUS_SCALE if q_delta >= Q_DELTA_THRESHOLD else TERMINAL_PENALTY
                 )
             return self._build_observation(
-                step_num, done, round(reward, 4), metrics, q
+                step_num, done, _normalize_visible_reward(reward), metrics, q
             )
 
         is_noop = action.action == "NO_OP"
@@ -725,11 +711,16 @@ class LayoutEnvironment(Environment):
         else:
             pass
 
-        metrics = compute_all_metrics(self._state.elements, self._stats)
+        metrics = compute_all_metrics(
+            self._state.elements,
+            self._stats,
+            saliency_map=self._saliency_map,
+            content_metric_names=self._active_content_metric_names(),
+        )
         q = quality_score(metrics, self._weights)
         delta_q = q - self._state.previous_quality
 
-        done = is_noop or step_num >= self._active_max_steps
+        done = is_noop or step_num >= self._max_steps
 
         reward = REWARD_SCALE * delta_q + STEP_PENALTY
         if done:
@@ -739,7 +730,7 @@ class LayoutEnvironment(Environment):
             )
 
         obs = self._build_observation(
-            step_num, done, round(reward, 4), metrics, q
+            step_num, done, _normalize_visible_reward(reward), metrics, q
         )
         self._state.previous_quality = q
         return obs
