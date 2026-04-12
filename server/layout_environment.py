@@ -540,8 +540,10 @@ class LayoutEnvironment(Environment):
         self._saliency_map: np.ndarray | None = None
 
     def _active_content_metric_names(self) -> Set[str]:
-        # Global policy: content-aware metrics are VLM-only.
-        return CONTENT_AWARE_METRICS if self._mode == "vlm" else set()
+        # Global policy: content-aware metrics are VLM-only AND require a valid saliency map.
+        if self._mode == "vlm" and self._saliency_map is not None:
+            return CONTENT_AWARE_METRICS
+        return set()
 
     def _build_observation(
         self,

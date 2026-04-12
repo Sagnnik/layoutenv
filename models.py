@@ -62,7 +62,7 @@ class LayoutAction(Action):
             if not (0 <= self.element_id < num_elements):
                 return False
 
-        if self.action in ["MOVE", "RESIZE"] and self.magnitude not in MAGNITUDES:
+        if self.magnitude not in MAGNITUDES:
             return False
 
         return True

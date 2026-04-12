@@ -23,10 +23,10 @@ from dotenv import load_dotenv
 from openai import OpenAI
 try:
     from layoutenv import LayoutAction, LayoutEnv, LayoutObservation
-    from layoutenv.grader import grade_episode, success_from_q_delta
+    from layoutenv.grader import grade_episode, success_from_q_delta, TASK_SUCCESS_Q_DELTA
 except ImportError:
     from client import LayoutEnv
-    from grader import grade_episode, success_from_q_delta
+    from grader import grade_episode, success_from_q_delta, TASK_SUCCESS_Q_DELTA
     from models import LayoutAction, LayoutObservation
 from prompts import ACTION_JSON_SCHEMA, get_prompts, parse_action
 
@@ -40,7 +40,6 @@ TASK_NAME = os.getenv("LAYOUT_TASK", "layout-refinement")
 BENCHMARK = os.getenv("LAYOUT_BENCHMARK", "layoutenv")
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.0"))
 MAX_TOKENS = 200
-SUCCESS_Q_DELTA = 0.1
 # Clamp epsilon — keep printed rewards/scores strictly inside (0, 1).
 _REWARD_EPS = 0.05
 PRINT_SUMMARY_STDERR = os.getenv("PRINT_SUMMARY_STDERR", "0") == "1"
@@ -188,7 +187,8 @@ async def get_layout_action(
     if keep_messages == 0:
         history.clear()
     elif len(history) > keep_messages:
-        del history[:-keep_messages]
+        # keep newest messages
+        history[:] = history[-keep_messages:]
     return action, raw, parse_failed, error_msg
 
 
@@ -292,7 +292,8 @@ async def run_episode(
             log_step(step, action_str, reward, done, error)
             if EARLY_STOP_ON_SUCCESS:
                 q_delta_now = obs.quality_score - initial_q
-                if success_from_q_delta(task_id, q_delta_now, SUCCESS_Q_DELTA):
+                task_threshold = TASK_SUCCESS_Q_DELTA.get(task_id, 0.15)
+                if success_from_q_delta(task_id, q_delta_now, task_threshold):
                     break
             if done:
                 break
@@ -303,7 +304,7 @@ async def run_episode(
             task_id=task_id,
             initial_quality=initial_q,
             final_quality=final_q,
-            success_q_delta=SUCCESS_Q_DELTA,
+            success_q_delta=TASK_SUCCESS_Q_DELTA.get(task_id, 0.15),
         )
         success = grade.success
         end_score = grade.score
