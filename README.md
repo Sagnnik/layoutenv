@@ -245,8 +245,8 @@ reward = REWARD_SCALE * (Q_t - Q_{t-1}) + STEP_PENALTY
 
 Thresholds:
 
-* easy ≥ 0.15
-* medium ≥ 0.25
+* easy ≥ 0.10
+* medium ≥ 0.20
 * hard ≥ 0.32
 
 ---

@@ -332,7 +332,7 @@ async def run_episode(
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Layout RL inference script")
-    parser.add_argument("--mode", choices=["llm", "vlm"], default="llm")
+    parser.add_argument("--mode", choices=["llm", "vlm"], default="vlm")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--task", type=str, default=None, choices=["easy", "medium", "hard"])
     parser.add_argument("--max-steps", type=int, default=20)
