@@ -4,6 +4,9 @@ Layout Environment Client.
 HTTP / WebSocket client for interacting with a remote LayoutEnvironment server.
 """
 
+import os
+import urllib.error
+import urllib.request
 from typing import Dict
 
 
@@ -14,6 +17,39 @@ try:
     from .models import LayoutAction, LayoutObservation, LayoutState
 except ImportError:
     from models import LayoutAction, LayoutObservation, LayoutState
+
+
+def layout_env_kwargs_from_environ() -> Dict[str, float]:
+    """
+    Extra kwargs for :class:`LayoutEnv` (OpenEnv ``EnvClient``).
+
+    Default WebSocket connect timeout in openenv is 10s, which is often too low for
+    Hugging Face Spaces that are cold-starting or waking from sleep.
+    """
+    return {
+        "connect_timeout_s": float(os.getenv("LAYOUTENV_WS_CONNECT_TIMEOUT", "120")),
+        "message_timeout_s": float(os.getenv("LAYOUTENV_WS_MESSAGE_TIMEOUT", "120")),
+    }
+
+
+def warmup_hf_space_http(base_url: str, timeout_s: float = 180.0) -> None:
+    """
+    Best-effort HTTP GET to the Space origin so a sleeping replica can boot
+    before the WebSocket handshake (reduces ``timed out during opening handshake``).
+    """
+    if os.getenv("LAYOUTENV_SKIP_SPACE_WARMUP", "").lower() in ("1", "true", "yes"):
+        return
+    base = base_url.strip().rstrip("/")
+    if not base.startswith("http"):
+        base = "https://" + base
+    if ".hf.space" not in base.lower():
+        return
+    req = urllib.request.Request(base, headers={"User-Agent": "layoutenv-client/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            resp.read(65536)
+    except (urllib.error.URLError, TimeoutError, OSError):
+        pass
 
 
 class LayoutEnv(EnvClient[LayoutAction, LayoutObservation, LayoutState]):

@@ -23,9 +23,10 @@ from dotenv import load_dotenv
 from openai import OpenAI
 try:
     from layoutenv import LayoutAction, LayoutEnv, LayoutObservation
+    from layoutenv.client import layout_env_kwargs_from_environ, warmup_hf_space_http
     from layoutenv.grader import grade_episode, success_from_q_delta, TASK_SUCCESS_Q_DELTA
 except ImportError:
-    from client import LayoutEnv
+    from client import LayoutEnv, layout_env_kwargs_from_environ, warmup_hf_space_http
     from grader import grade_episode, success_from_q_delta, TASK_SUCCESS_Q_DELTA
     from models import LayoutAction, LayoutObservation
 from prompts import ACTION_JSON_SCHEMA, get_prompts, parse_action
@@ -357,7 +358,11 @@ async def main() -> None:
             raise RuntimeError(f"Task '{args.task}' not found in {TASK_SAMPLES_JSON}")
     client = OpenAI(base_url=API_BASE_URL, api_key=api_key)
     if args.env_base_url:
-        env = LayoutEnv(base_url=args.env_base_url.rstrip("/"))
+        warmup_hf_space_http(args.env_base_url)
+        env = LayoutEnv(
+            base_url=args.env_base_url.rstrip("/"),
+            **layout_env_kwargs_from_environ(),
+        )
     else:
         env = await LayoutEnv.from_docker_image(IMAGE_NAME)
     results: List[Dict[str, Any]] = []
